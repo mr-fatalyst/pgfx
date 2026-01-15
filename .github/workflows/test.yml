@@ -73,11 +73,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
 
-      - name: Install Python dependencies
-        run: uv pip install --system maturin pytest
+      - name: Create venv and install dependencies
+        run: |
+          uv venv
+          uv pip install maturin pytest
 
       - name: Build
-        run: maturin develop --release
+        run: |
+          source .venv/bin/activate
+          maturin develop --release
 
       - name: Test
-        run: pytest tests/ -v
+        run: |
+          source .venv/bin/activate
+          pytest tests/ -v
