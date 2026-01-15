@@ -5,9 +5,26 @@ build-backend = "maturin"
 [project]
 name = "pgfx"
 version = "0.1.0"
-description = "Lightweight 2D game library for Python with Rust core"
+description = "Lightweight 2D game library for Python, inspired by Haaf's Game Engine"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [
+    {name = "Nikita Ryzhenkov", email = "nikita.ryzhenkoff@gmail.com"}
+]
+readme = "README.md"
+keywords = ["gamedev", "2d", "graphics", "game", "engine"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics",
+]
+
+[project.urls]
+Repository = "https://github.com/mr-fatalyst/pgfx"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pre-commit"]

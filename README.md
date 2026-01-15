@@ -1,6 +1,6 @@
 # pgfx
 
-Lightweight 2D game library for Python. Fast, simple, no boilerplate.
+Lightweight 2D game library for Python, inspired by Haaf's Game Engine.
 
 ## Installation
 
