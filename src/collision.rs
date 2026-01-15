@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use crate::sprite::SpriteId;
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 pub fn collide_rects(
     x1: f32,
     y1: f32,
@@ -47,6 +48,7 @@ pub fn point_in_circle(px: f32, py: f32, cx: f32, cy: f32, r: f32) -> bool {
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 pub fn raycast_rect(
     ox: f32,
     oy: f32,

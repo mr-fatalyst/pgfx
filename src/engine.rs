@@ -20,7 +20,6 @@ pub struct EngineConfig {
     pub title: String,
     pub fullscreen: bool,
     pub resizable: bool,
-    pub fixed_dt: Option<f64>,
     pub fps_limit: u32,
 }
 
@@ -75,7 +74,6 @@ pub struct Engine {
     pub(crate) last_frame: Instant,
     pub(crate) dt: f32,
     pub(crate) fps: u32,
-    pub(crate) accumulator: f32,
 
     // Running state
     pub(crate) running: bool,
@@ -112,7 +110,6 @@ impl Engine {
             last_frame: now,
             dt: 0.016, // ~60 fps default
             fps: 60,
-            accumulator: 0.0,
             running: true,
         }
     }
@@ -225,6 +222,39 @@ where
     Ok(f(&mut guard))
 }
 
+/// Simple frame rate limiter
+struct FrameLimiter {
+    target_frame_time: Option<std::time::Duration>,
+    frame_start: Instant,
+}
+
+impl FrameLimiter {
+    fn new(fps_limit: u32) -> Self {
+        let target_frame_time = if fps_limit > 0 {
+            Some(std::time::Duration::from_secs_f64(1.0 / fps_limit as f64))
+        } else {
+            None
+        };
+        Self {
+            target_frame_time,
+            frame_start: Instant::now(),
+        }
+    }
+
+    fn frame_start(&mut self) {
+        self.frame_start = Instant::now();
+    }
+
+    fn frame_end(&self) {
+        if let Some(target) = self.target_frame_time {
+            let elapsed = self.frame_start.elapsed();
+            if elapsed < target {
+                std::thread::sleep(target - elapsed);
+            }
+        }
+    }
+}
+
 /// Application handler for winit event loop
 struct AppHandler {
     update_fn: Py<PyAny>,
@@ -232,7 +262,7 @@ struct AppHandler {
     on_ready_fn: Option<Py<PyAny>>,
     window_created: bool,
     ready_called: bool,
-    loop_helper: spin_sleep::LoopHelper,
+    frame_limiter: FrameLimiter,
 }
 
 impl AppHandler {
@@ -242,19 +272,13 @@ impl AppHandler {
         on_ready_fn: Option<Py<PyAny>>,
         fps_limit: u32,
     ) -> Self {
-        let loop_helper = if fps_limit > 0 {
-            spin_sleep::LoopHelper::builder().build_with_target_rate(fps_limit as f64)
-        } else {
-            spin_sleep::LoopHelper::builder().build_without_target_rate()
-        };
-
         Self {
             update_fn,
             render_fn,
             on_ready_fn,
             window_created: false,
             ready_called: false,
-            loop_helper,
+            frame_limiter: FrameLimiter::new(fps_limit),
         }
     }
 }
@@ -345,7 +369,7 @@ impl ApplicationHandler for AppHandler {
                     // Call on_ready callback if provided
                     if !self.ready_called {
                         if let Some(ref on_ready) = self.on_ready_fn {
-                            Python::with_gil(|py| {
+                            Python::attach(|py| {
                                 if let Err(e) = on_ready.call0(py) {
                                     eprintln!("Error in on_ready callback: {}", e);
                                 }
@@ -388,7 +412,7 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::RedrawRequested => {
                 // Start frame timing for FPS limit
-                self.loop_helper.loop_start();
+                self.frame_limiter.frame_start();
 
                 // Update timing
                 let should_continue = with_engine(|engine| {
@@ -458,7 +482,7 @@ impl ApplicationHandler for AppHandler {
                 .ok();
 
                 // Sleep to maintain target frame rate
-                self.loop_helper.loop_sleep();
+                self.frame_limiter.frame_end();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 // Handle keyboard input
@@ -499,14 +523,13 @@ impl ApplicationHandler for AppHandler {
 }
 
 #[pyfunction]
-#[pyo3(signature = (width, height, title, fullscreen=false, resizable=false, fixed_dt=None, fps_limit=60))]
+#[pyo3(signature = (width, height, title, fullscreen=false, resizable=false, fps_limit=60))]
 pub fn init(
     width: u32,
     height: u32,
     title: &str,
     fullscreen: bool,
     resizable: bool,
-    fixed_dt: Option<f64>,
     fps_limit: u32,
 ) -> PyResult<()> {
     // Check if already initialized
@@ -522,7 +545,6 @@ pub fn init(
         title: title.to_string(),
         fullscreen,
         resizable,
-        fixed_dt,
         fps_limit,
     };
 
@@ -615,19 +637,17 @@ mod tests {
             width: 1024,
             height: 768,
             title: "Test".to_string(),
-            vsync: true,
             fullscreen: false,
             resizable: true,
-            fixed_dt: Some(0.016),
+            fps_limit: 60,
         };
 
         assert_eq!(config.width, 1024);
         assert_eq!(config.height, 768);
         assert_eq!(config.title, "Test");
-        assert!(config.vsync);
         assert!(!config.fullscreen);
         assert!(config.resizable);
-        assert_eq!(config.fixed_dt, Some(0.016));
+        assert_eq!(config.fps_limit, 60);
     }
 
     #[test]
@@ -636,10 +656,9 @@ mod tests {
             width: 800,
             height: 600,
             title: "Test Engine".to_string(),
-            vsync: true,
             fullscreen: false,
             resizable: false,
-            fixed_dt: None,
+            fps_limit: 0,
         };
 
         let engine = Engine::new(config);

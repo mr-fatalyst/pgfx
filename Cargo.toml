@@ -23,4 +23,3 @@ lyon = "1.0"
 bytemuck = { version = "1.24", features = ["derive"] }
 pollster = "0.4"
 rand = "0.8"
-spin_sleep = "1.2"

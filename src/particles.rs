@@ -217,6 +217,7 @@ impl ParticleSystem {
 
     /// Generate draw commands for rendering particles
     /// Returns (cmd, sprite_id, x, y, rot, scale, flip_x, flip_y, r, g, b, a)
+    #[allow(clippy::type_complexity)]
     pub fn generate_draw_commands(
         &self,
         base_sprite_size: f32,
@@ -249,6 +250,7 @@ impl ParticleSystem {
     }
 
     /// Generate primitive vertices for rendering particles as colored quads
+    #[allow(clippy::type_complexity)]
     pub fn generate_vertices(&self) -> Vec<(u8, f32, f32, f32, f32, u8, u8, u8, u8)> {
         let mut commands = Vec::new();
 

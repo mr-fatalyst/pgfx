@@ -14,14 +14,10 @@ pub struct GlyphInfo {
     pub advance: f32,             // horizontal advance
 }
 
-/// Font resource - contains fontdue font and glyph atlas texture
+/// Font resource - contains glyph atlas texture and glyph info
 pub struct Font {
-    pub fontdue_font: fontdue::Font,
-    pub size: f32,
     pub atlas_texture_id: TextureId,
     pub glyphs: HashMap<char, GlyphInfo>,
-    pub atlas_width: u32,
-    pub atlas_height: u32,
     pub smooth: bool, // false = pixel-perfect (round coordinates)
 }
 
@@ -206,24 +202,25 @@ pub fn font_load(path: &str, size: u32, smooth: bool) -> PyResult<FontId> {
         });
 
         // Create bind group for font atlas texture
-        let bind_group = if let Some(layout) = &engine.sprite_texture_bind_group_layout {
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Font Atlas Bind Group"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            }))
-        } else {
-            None
-        };
+        let bind_group = engine
+            .sprite_texture_bind_group_layout
+            .as_ref()
+            .map(|layout| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Font Atlas Bind Group"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                })
+            });
 
         // Create Texture struct for atlas
         let atlas_texture = crate::texture::Texture {
@@ -239,12 +236,8 @@ pub fn font_load(path: &str, size: u32, smooth: bool) -> PyResult<FontId> {
 
         // Create Font struct
         let font = Font {
-            fontdue_font,
-            size: size_f32,
             atlas_texture_id,
             glyphs,
-            atlas_width,
-            atlas_height,
             smooth,
         };
 

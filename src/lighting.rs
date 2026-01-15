@@ -43,62 +43,6 @@ impl LightingState {
     }
 }
 
-/// Calculate light contribution at a given point
-/// Returns a color multiplier [r, g, b, a] in 0.0-1.0 range
-pub fn calculate_light_contribution(
-    x: f32,
-    y: f32,
-    lights: &[(f32, f32, &Light)], // (x, y, light) tuples
-    ambient: [f32; 4],
-    time: f32, // For flicker animation
-) -> [f32; 4] {
-    // Start with ambient light
-    let mut total_r = ambient[0];
-    let mut total_g = ambient[1];
-    let mut total_b = ambient[2];
-
-    // Add contribution from each light
-    for (lx, ly, light) in lights {
-        let dx = x - lx;
-        let dy = y - ly;
-        let dist_sq = dx * dx + dy * dy;
-        let radius = light.radius;
-
-        if dist_sq < radius * radius {
-            // Calculate attenuation (inverse square law with smoothing)
-            let dist = dist_sq.sqrt();
-            let attenuation = 1.0 - (dist / radius).min(1.0);
-            let attenuation = attenuation * attenuation; // Quadratic falloff for smoother gradient
-
-            // Apply flicker if enabled
-            let mut intensity = light.intensity;
-            if light.flicker_amount > 0.0 {
-                let flicker_phase = time * light.flicker_speed * 10.0;
-                let flicker = (flicker_phase.sin() * 0.5 + 0.5) * light.flicker_amount;
-                intensity *= 1.0 - flicker;
-            }
-
-            // Convert light color to 0.0-1.0 range
-            let light_r = light.color[0] as f32 / 255.0;
-            let light_g = light.color[1] as f32 / 255.0;
-            let light_b = light.color[2] as f32 / 255.0;
-
-            // Add light contribution
-            total_r += light_r * attenuation * intensity;
-            total_g += light_g * attenuation * intensity;
-            total_b += light_b * attenuation * intensity;
-        }
-    }
-
-    // Clamp to valid range
-    [
-        total_r.min(1.0),
-        total_g.min(1.0),
-        total_b.min(1.0),
-        1.0, // Alpha stays at 1.0
-    ]
-}
-
 #[pyfunction]
 pub fn set_ambient(r: u8, g: u8, b: u8, a: u8) -> PyResult<()> {
     crate::engine::with_engine(|engine| {

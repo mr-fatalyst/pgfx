@@ -135,10 +135,7 @@ impl AudioState {
         }
 
         // Store the sink so we can stop it later
-        self.sound_sinks
-            .entry(id)
-            .or_insert_with(Vec::new)
-            .push(sink);
+        self.sound_sinks.entry(id).or_default().push(sink);
 
         // Clean up finished sinks
         if let Some(sinks) = self.sound_sinks.get_mut(&id) {
@@ -257,7 +254,7 @@ where
         }
 
         let audio = engine.audio.as_mut().unwrap();
-        f(audio).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+        f(audio).map_err(pyo3::exceptions::PyRuntimeError::new_err)
     })?
 }
 

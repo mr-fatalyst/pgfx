@@ -12,6 +12,7 @@ pub enum PrimitiveType {
 }
 
 /// Texture resource stored on GPU
+#[allow(dead_code)]
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -231,24 +232,25 @@ pub fn texture_load(path: &str) -> PyResult<TextureId> {
         });
 
         // Create bind group for this texture (cached for rendering)
-        let bind_group = if let Some(layout) = &engine.sprite_texture_bind_group_layout {
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Texture Bind Group"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            }))
-        } else {
-            None
-        };
+        let bind_group = engine
+            .sprite_texture_bind_group_layout
+            .as_ref()
+            .map(|layout| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Texture Bind Group"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                })
+            });
 
         // Create Texture struct
         let tex = Texture {

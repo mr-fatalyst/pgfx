@@ -173,7 +173,7 @@ impl GamepadManager {
     /// Returns the existing slot if already assigned, or finds a free slot
     fn find_gamepad_slot(&mut self, gamepad_id: gilrs::GamepadId) -> Option<usize> {
         // First check if this gamepad is already assigned a slot
-        for (_slot, gamepad) in self.gamepads.iter().enumerate() {
+        for gamepad in self.gamepads.iter() {
             if gamepad.connected {
                 // We need to track gamepad IDs to slots
                 // For now, use a simple approach: map gamepad index to slot
