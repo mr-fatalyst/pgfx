@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.10"]
+build-backend = "maturin"
+
+[project]
+name = "pgfx"
+version = "0.1.0"
+description = "Lightweight 2D game library for Python with Rust core"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pre-commit"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "pgfx._native"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"python/pgfx/__init__.py" = ["F401", "F403"]

@@ -1,0 +1,176 @@
+"""Constants for pgfx: keys, mouse buttons, colors."""
+
+
+class Color:
+    """RGBA color."""
+
+    __slots__ = ("r", "g", "b", "a")
+
+    def __init__(self, r: int, g: int, b: int, a: int = 255):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
+    def __repr__(self):
+        return f"Color({self.r}, {self.g}, {self.b}, {self.a})"
+
+
+# Predefined colors
+WHITE = Color(255, 255, 255)
+BLACK = Color(0, 0, 0)
+RED = Color(255, 0, 0)
+GREEN = Color(0, 255, 0)
+BLUE = Color(0, 0, 255)
+YELLOW = Color(255, 255, 0)
+CYAN = Color(0, 255, 255)
+MAGENTA = Color(255, 0, 255)
+TRANSPARENT = Color(0, 0, 0, 0)
+
+# Keyboard keys (matching winit virtual key codes)
+KEY_A = 0
+KEY_B = 1
+KEY_C = 2
+KEY_D = 3
+KEY_E = 4
+KEY_F = 5
+KEY_G = 6
+KEY_H = 7
+KEY_I = 8
+KEY_J = 9
+KEY_K = 10
+KEY_L = 11
+KEY_M = 12
+KEY_N = 13
+KEY_O = 14
+KEY_P = 15
+KEY_Q = 16
+KEY_R = 17
+KEY_S = 18
+KEY_T = 19
+KEY_U = 20
+KEY_V = 21
+KEY_W = 22
+KEY_X = 23
+KEY_Y = 24
+KEY_Z = 25
+
+KEY_0 = 26
+KEY_1 = 27
+KEY_2 = 28
+KEY_3 = 29
+KEY_4 = 30
+KEY_5 = 31
+KEY_6 = 32
+KEY_7 = 33
+KEY_8 = 34
+KEY_9 = 35
+
+KEY_ESCAPE = 36
+KEY_SPACE = 37
+KEY_ENTER = 38
+KEY_TAB = 39
+KEY_BACKSPACE = 40
+
+KEY_LEFT = 41
+KEY_RIGHT = 42
+KEY_UP = 43
+KEY_DOWN = 44
+
+KEY_LSHIFT = 45
+KEY_RSHIFT = 46
+KEY_LCTRL = 47
+KEY_RCTRL = 48
+KEY_LALT = 49
+KEY_RALT = 50
+
+KEY_F1 = 51
+KEY_F2 = 52
+KEY_F3 = 53
+KEY_F4 = 54
+KEY_F5 = 55
+KEY_F6 = 56
+KEY_F7 = 57
+KEY_F8 = 58
+KEY_F9 = 59
+KEY_F10 = 60
+KEY_F11 = 61
+KEY_F12 = 62
+
+# Navigation keys
+KEY_INSERT = 63
+KEY_DELETE = 64
+KEY_HOME = 65
+KEY_END = 66
+KEY_PAGEUP = 67
+KEY_PAGEDOWN = 68
+
+# Punctuation and symbols
+KEY_MINUS = 69
+KEY_EQUAL = 70
+KEY_LBRACKET = 71
+KEY_RBRACKET = 72
+KEY_BACKSLASH = 73
+KEY_SEMICOLON = 74
+KEY_QUOTE = 75
+KEY_BACKQUOTE = 76
+KEY_COMMA = 77
+KEY_PERIOD = 78
+KEY_SLASH = 79
+
+# NumPad
+KEY_NUMPAD0 = 80
+KEY_NUMPAD1 = 81
+KEY_NUMPAD2 = 82
+KEY_NUMPAD3 = 83
+KEY_NUMPAD4 = 84
+KEY_NUMPAD5 = 85
+KEY_NUMPAD6 = 86
+KEY_NUMPAD7 = 87
+KEY_NUMPAD8 = 88
+KEY_NUMPAD9 = 89
+KEY_NUMPAD_ADD = 90
+KEY_NUMPAD_SUBTRACT = 91
+KEY_NUMPAD_MULTIPLY = 92
+KEY_NUMPAD_DIVIDE = 93
+KEY_NUMPAD_ENTER = 94
+KEY_NUMPAD_DECIMAL = 95
+
+# Other special keys
+KEY_CAPSLOCK = 96
+KEY_NUMLOCK = 97
+KEY_SCROLLLOCK = 98
+KEY_PRINTSCREEN = 99
+KEY_PAUSE = 100
+
+# Mouse buttons
+MOUSE_LEFT = 0
+MOUSE_RIGHT = 1
+MOUSE_MIDDLE = 2
+
+# Gamepad buttons
+GAMEPAD_A = 0
+GAMEPAD_B = 1
+GAMEPAD_X = 2
+GAMEPAD_Y = 3
+GAMEPAD_LB = 4
+GAMEPAD_RB = 5
+GAMEPAD_BACK = 6
+GAMEPAD_START = 7
+GAMEPAD_GUIDE = 8
+GAMEPAD_LSTICK = 9
+GAMEPAD_RSTICK = 10
+GAMEPAD_DPAD_UP = 11
+GAMEPAD_DPAD_DOWN = 12
+GAMEPAD_DPAD_LEFT = 13
+GAMEPAD_DPAD_RIGHT = 14
+
+# Gamepad axes
+GAMEPAD_AXIS_LX = 0
+GAMEPAD_AXIS_LY = 1
+GAMEPAD_AXIS_RX = 2
+GAMEPAD_AXIS_RY = 3
+
+# Gamepad triggers
+GAMEPAD_TRIGGER_L = 0
+GAMEPAD_TRIGGER_R = 1
