@@ -15,10 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+        run: uv python install 3.12
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -28,8 +29,13 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
       - name: Install tools
-        run: pip install ruff
+        run: uv tool install ruff
 
       - name: Rust fmt
         run: cargo fmt --check
@@ -38,7 +44,7 @@ jobs:
         run: cargo clippy -- -D warnings
 
       - name: Ruff
-        run: ruff check python/ tests/
+        run: uvx ruff check python/ tests/
 
   test:
     needs: lint
@@ -50,10 +56,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,11 +68,13 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
-          pip install maturin pytest
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
+
+      - name: Install Python dependencies
+        run: uv pip install --system maturin pytest
 
       - name: Build
         run: maturin develop --release
