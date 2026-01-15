@@ -4,8 +4,14 @@ use crate::sprite::SpriteId;
 
 #[pyfunction]
 pub fn collide_rects(
-    x1: f32, y1: f32, w1: f32, h1: f32,
-    x2: f32, y2: f32, w2: f32, h2: f32,
+    x1: f32,
+    y1: f32,
+    w1: f32,
+    h1: f32,
+    x2: f32,
+    y2: f32,
+    w2: f32,
+    h2: f32,
 ) -> bool {
     x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2
 }
@@ -42,9 +48,14 @@ pub fn point_in_circle(px: f32, py: f32, cx: f32, cy: f32, r: f32) -> bool {
 
 #[pyfunction]
 pub fn raycast_rect(
-    ox: f32, oy: f32,
-    dx: f32, dy: f32,
-    rx: f32, ry: f32, rw: f32, rh: f32,
+    ox: f32,
+    oy: f32,
+    dx: f32,
+    dy: f32,
+    rx: f32,
+    ry: f32,
+    rw: f32,
+    rh: f32,
 ) -> Option<f32> {
     let inv_dx = if dx != 0.0 { 1.0 / dx } else { f32::INFINITY };
     let inv_dy = if dy != 0.0 { 1.0 / dy } else { f32::INFINITY };
@@ -90,8 +101,12 @@ pub fn sprite_rect(spr: SpriteId, x: f32, y: f32) -> PyResult<(f32, f32, f32, f3
 
 #[pyfunction]
 pub fn collide_sprites(
-    spr1: SpriteId, x1: f32, y1: f32,
-    spr2: SpriteId, x2: f32, y2: f32,
+    spr1: SpriteId,
+    x1: f32,
+    y1: f32,
+    spr2: SpriteId,
+    x2: f32,
+    y2: f32,
 ) -> PyResult<bool> {
     // Get the bounding rectangles for both sprites
     let (rx1, ry1, rw1, rh1) = sprite_rect(spr1, x1, y1)?;

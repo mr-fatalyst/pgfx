@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::sync::Arc;
-use winit::window::Window;
 use wgpu::util::DeviceExt;
+use winit::window::Window;
 
 // Command types for batching
 pub const CMD_CLEAR: u8 = 0;
@@ -114,19 +114,20 @@ pub fn init_gpu(
 
     // Print adapter info
     let info = adapter.get_info();
-    println!("pgfx: Using GPU: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
+    println!(
+        "pgfx: Using GPU: {} ({:?}, {:?})",
+        info.name, info.backend, info.device_type
+    );
 
     // Request device and queue
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("pgfx Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            experimental_features: Default::default(),
-            trace: Default::default(),
-        },
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("pgfx Device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        experimental_features: Default::default(),
+        trace: Default::default(),
+    }))
     .map_err(|e| format!("Failed to create device: {}", e))?;
 
     // Get surface capabilities
@@ -172,9 +173,9 @@ struct SpriteDrawCommand {
     alpha: f32,
     flip_x: bool,
     flip_y: bool,
-    z: i32,  // Z-order for layer sorting (higher = on top)
+    z: i32,                            // Z-order for layer sorting (higher = on top)
     color_override: Option<[f32; 4]>,  // Override sprite color (for particles/primitives)
-    size_override: Option<(f32, f32)>,  // Override size (w, h) for primitives
+    size_override: Option<(f32, f32)>, // Override size (w, h) for primitives
 }
 
 /// Generate vertices for a sprite with transformations
@@ -200,10 +201,10 @@ fn generate_sprite_vertices(
 
     // Calculate corner positions before rotation (relative to origin)
     let corners = [
-        (-ox, -oy),           // top-left
-        (w - ox, -oy),        // top-right
-        (-ox, h - oy),        // bottom-left
-        (w - ox, h - oy),     // bottom-right
+        (-ox, -oy),       // top-left
+        (w - ox, -oy),    // top-right
+        (-ox, h - oy),    // bottom-left
+        (w - ox, h - oy), // bottom-right
     ];
 
     // Apply rotation (inline to avoid allocation)
@@ -211,10 +212,22 @@ fn generate_sprite_vertices(
     let sin = cmd.rot.sin();
 
     let rotated_corners: [[f32; 2]; 4] = [
-        [cmd.x + corners[0].0 * cos - corners[0].1 * sin, cmd.y + corners[0].0 * sin + corners[0].1 * cos],
-        [cmd.x + corners[1].0 * cos - corners[1].1 * sin, cmd.y + corners[1].0 * sin + corners[1].1 * cos],
-        [cmd.x + corners[2].0 * cos - corners[2].1 * sin, cmd.y + corners[2].0 * sin + corners[2].1 * cos],
-        [cmd.x + corners[3].0 * cos - corners[3].1 * sin, cmd.y + corners[3].0 * sin + corners[3].1 * cos],
+        [
+            cmd.x + corners[0].0 * cos - corners[0].1 * sin,
+            cmd.y + corners[0].0 * sin + corners[0].1 * cos,
+        ],
+        [
+            cmd.x + corners[1].0 * cos - corners[1].1 * sin,
+            cmd.y + corners[1].0 * sin + corners[1].1 * cos,
+        ],
+        [
+            cmd.x + corners[2].0 * cos - corners[2].1 * sin,
+            cmd.y + corners[2].0 * sin + corners[2].1 * cos,
+        ],
+        [
+            cmd.x + corners[3].0 * cos - corners[3].1 * sin,
+            cmd.y + corners[3].0 * sin + corners[3].1 * cos,
+        ],
     ];
 
     // Calculate UV coordinates
@@ -247,13 +260,36 @@ fn generate_sprite_vertices(
     // Triangle 1: top-left, top-right, bottom-left
     // Triangle 2: top-right, bottom-right, bottom-left
     [
-        SpriteVertex { position: rotated_corners[0], tex_coords: [u0, v0], color },
-        SpriteVertex { position: rotated_corners[1], tex_coords: [u1, v0], color },
-        SpriteVertex { position: rotated_corners[2], tex_coords: [u0, v1], color },
-
-        SpriteVertex { position: rotated_corners[1], tex_coords: [u1, v0], color },
-        SpriteVertex { position: rotated_corners[3], tex_coords: [u1, v1], color },
-        SpriteVertex { position: rotated_corners[2], tex_coords: [u0, v1], color },
+        SpriteVertex {
+            position: rotated_corners[0],
+            tex_coords: [u0, v0],
+            color,
+        },
+        SpriteVertex {
+            position: rotated_corners[1],
+            tex_coords: [u1, v0],
+            color,
+        },
+        SpriteVertex {
+            position: rotated_corners[2],
+            tex_coords: [u0, v1],
+            color,
+        },
+        SpriteVertex {
+            position: rotated_corners[1],
+            tex_coords: [u1, v0],
+            color,
+        },
+        SpriteVertex {
+            position: rotated_corners[3],
+            tex_coords: [u1, v1],
+            color,
+        },
+        SpriteVertex {
+            position: rotated_corners[2],
+            tex_coords: [u0, v1],
+            color,
+        },
     ]
 }
 
@@ -262,7 +298,15 @@ fn generate_sprite_vertices(
 pub fn create_sprite_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
-) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::Buffer), String> {
+) -> Result<
+    (
+        wgpu::RenderPipeline,
+        wgpu::BindGroupLayout,
+        wgpu::BindGroupLayout,
+        wgpu::Buffer,
+    ),
+    String,
+> {
     // Load shader
     let shader_source = include_str!("../shaders/sprite.wgsl");
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -279,42 +323,44 @@ pub fn create_sprite_pipeline(
     });
 
     // Create bind group layout for projection uniform (group 0)
-    let projection_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Sprite Projection Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
-
-    // Create bind group layout for texture + sampler (group 1)
-    let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Sprite Texture Bind Group Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
+    let projection_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Sprite Projection Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
                 count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
+            }],
+        });
+
+    // Create bind group layout for texture + sampler (group 1)
+    let texture_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Sprite Texture Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
     // Create pipeline layout
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -363,7 +409,12 @@ pub fn create_sprite_pipeline(
     });
 
     // Return pipeline, both bind group layouts, and projection buffer
-    Ok((pipeline, projection_bind_group_layout, texture_bind_group_layout, projection_buffer))
+    Ok((
+        pipeline,
+        projection_bind_group_layout,
+        texture_bind_group_layout,
+        projection_buffer,
+    ))
 }
 
 // Debug timing flag - set to true to print timing info
@@ -375,15 +426,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
     let t_start = Instant::now();
 
     // Get primitive sprite IDs first (cached after first call)
-    let (white_pixel_sprite, circle_sprite, circle_soft_sprite) = crate::engine::with_engine(|engine| {
-        let wp = engine.get_or_create_primitive_sprite(crate::texture::PrimitiveType::WhitePixel)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Failed to create white pixel sprite"))?;
-        let c = engine.get_or_create_primitive_sprite(crate::texture::PrimitiveType::Circle)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Failed to create circle sprite"))?;
-        let cs = engine.get_or_create_primitive_sprite(crate::texture::PrimitiveType::CircleSoft)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Failed to create circle soft sprite"))?;
-        PyResult::Ok((wp, c, cs))
-    })??;
+    let (white_pixel_sprite, circle_sprite, circle_soft_sprite) =
+        crate::engine::with_engine(|engine| {
+            let wp = engine
+                .get_or_create_primitive_sprite(crate::texture::PrimitiveType::WhitePixel)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Failed to create white pixel sprite")
+                })?;
+            let c = engine
+                .get_or_create_primitive_sprite(crate::texture::PrimitiveType::Circle)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Failed to create circle sprite")
+                })?;
+            let cs = engine
+                .get_or_create_primitive_sprite(crate::texture::PrimitiveType::CircleSoft)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Failed to create circle soft sprite")
+                })?;
+            PyResult::Ok((wp, c, cs))
+        })??;
 
     // Parse commands - all go into one list preserving order
     let mut clear_color = wgpu::Color {
@@ -653,7 +714,9 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             if let Some(system) = engine.particle_systems.get(ps_id) {
                 if let Some(sprite_id) = system.config.sprite_id {
                     // Render as sprites (textured particles) with particle color
-                    let base_size = engine.sprites.get(sprite_id)
+                    let base_size = engine
+                        .sprites
+                        .get(sprite_id)
                         .map(|s| s.region.2 as f32)
                         .unwrap_or(32.0);
                     for draw_cmd in system.generate_draw_commands(base_size) {
@@ -667,7 +730,12 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             flip_x: draw_cmd.6,
                             flip_y: draw_cmd.7,
                             z,
-                            color_override: Some([draw_cmd.8, draw_cmd.9, draw_cmd.10, draw_cmd.11]),
+                            color_override: Some([
+                                draw_cmd.8,
+                                draw_cmd.9,
+                                draw_cmd.10,
+                                draw_cmd.11,
+                            ]),
                             size_override: None,
                         });
                     }
@@ -699,26 +767,34 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
         }
 
         // Now get GPU resources (immutable borrows)
-        let surface = engine.surface.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Surface not initialized")
-        })?;
-        let device = engine.device.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Device not initialized")
-        })?;
-        let queue = engine.queue.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Queue not initialized")
-        })?;
+        let surface = engine
+            .surface
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Surface not initialized"))?;
+        let device = engine
+            .device
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Device not initialized"))?;
+        let queue = engine
+            .queue
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Queue not initialized"))?;
         let surface_config = engine.surface_config.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Surface config not initialized")
         })?;
 
         // Get surface texture
         let output = surface.get_current_texture().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to acquire surface texture: {}", e))
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Failed to acquire surface texture: {}",
+                e
+            ))
         })?;
 
         // Create texture view
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -751,19 +827,29 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
                 })?;
-                let sprite_bind_group_layout = engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Sprite bind group layout not initialized")
-                })?;
-                let sprite_projection_buffer = engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Sprite projection buffer not initialized")
-                })?;
+                let sprite_bind_group_layout =
+                    engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            "Sprite bind group layout not initialized",
+                        )
+                    })?;
+                let sprite_projection_buffer =
+                    engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            "Sprite projection buffer not initialized",
+                        )
+                    })?;
 
                 // Update projection matrix
                 let projection = create_projection_matrix(
                     surface_config.width as f32,
                     surface_config.height as f32,
                 );
-                queue.write_buffer(sprite_projection_buffer, 0, bytemuck::cast_slice(projection.as_ref()));
+                queue.write_buffer(
+                    sprite_projection_buffer,
+                    0,
+                    bytemuck::cast_slice(projection.as_ref()),
+                );
 
                 // Create projection bind group
                 let projection_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -778,7 +864,8 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 let t_sprite_start = Instant::now();
 
                 // Group sprites by texture for batching, track offsets
-                let mut all_vertices: Vec<SpriteVertex> = Vec::with_capacity((sprite_commands.len() + text_draws.len() * 20) * 6);
+                let mut all_vertices: Vec<SpriteVertex> =
+                    Vec::with_capacity((sprite_commands.len() + text_draws.len() * 20) * 6);
                 let mut batches: Vec<(u32, u32, u32)> = Vec::new(); // (texture_id, start, count)
 
                 // Sort by z only, stable sort preserves insertion order within same z
@@ -792,12 +879,18 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 for cmd in &sorted_commands {
                     // Get sprite
                     let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!("Invalid sprite ID: {}", cmd.sprite_id))
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Invalid sprite ID: {}",
+                            cmd.sprite_id
+                        ))
                     })?;
 
                     // Get texture
                     let texture = engine.textures.get(sprite.texture_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!("Invalid texture ID: {}", sprite.texture_id))
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Invalid texture ID: {}",
+                            sprite.texture_id
+                        ))
                     })?;
 
                     // Check if texture changed
@@ -874,9 +967,15 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                         if let Some(glyph_info) = font.glyphs.get(&ch) {
                             // For pixel-perfect fonts, round glyph positions
                             let (glyph_x, glyph_y) = if font.smooth {
-                                (cursor_x + glyph_info.offset.0, cursor_y + glyph_info.offset.1)
+                                (
+                                    cursor_x + glyph_info.offset.0,
+                                    cursor_y + glyph_info.offset.1,
+                                )
                             } else {
-                                ((cursor_x + glyph_info.offset.0).floor(), (cursor_y + glyph_info.offset.1).floor())
+                                (
+                                    (cursor_x + glyph_info.offset.0).floor(),
+                                    (cursor_y + glyph_info.offset.1).floor(),
+                                )
                             };
 
                             let (u0, v0, u1, v1) = glyph_info.uv;
@@ -889,14 +988,38 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             let y1 = glyph_y + glyph_h;
 
                             // Triangle 1: top-left, top-right, bottom-left
-                            all_vertices.push(SpriteVertex { position: [x0, y0], tex_coords: [u0, v0], color });
-                            all_vertices.push(SpriteVertex { position: [x1, y0], tex_coords: [u1, v0], color });
-                            all_vertices.push(SpriteVertex { position: [x0, y1], tex_coords: [u0, v1], color });
+                            all_vertices.push(SpriteVertex {
+                                position: [x0, y0],
+                                tex_coords: [u0, v0],
+                                color,
+                            });
+                            all_vertices.push(SpriteVertex {
+                                position: [x1, y0],
+                                tex_coords: [u1, v0],
+                                color,
+                            });
+                            all_vertices.push(SpriteVertex {
+                                position: [x0, y1],
+                                tex_coords: [u0, v1],
+                                color,
+                            });
 
                             // Triangle 2: top-right, bottom-right, bottom-left
-                            all_vertices.push(SpriteVertex { position: [x1, y0], tex_coords: [u1, v0], color });
-                            all_vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [u1, v1], color });
-                            all_vertices.push(SpriteVertex { position: [x0, y1], tex_coords: [u0, v1], color });
+                            all_vertices.push(SpriteVertex {
+                                position: [x1, y0],
+                                tex_coords: [u1, v0],
+                                color,
+                            });
+                            all_vertices.push(SpriteVertex {
+                                position: [x1, y1],
+                                tex_coords: [u1, v1],
+                                color,
+                            });
+                            all_vertices.push(SpriteVertex {
+                                position: [x0, y1],
+                                tex_coords: [u0, v1],
+                                color,
+                            });
 
                             cursor_x += glyph_info.advance;
                         }
@@ -939,7 +1062,8 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     let t_buffer_write = t_sprite_start.elapsed();
 
                     if DEBUG_TIMING && sprite_commands_count > 100 {
-                        static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        static FRAME_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
                         let frame = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if frame % 60 == 0 {
                             println!("TIMING: parse={:.2}ms, vertex_gen={:.2}ms, buf_write={:.2}ms, sprites={}",
@@ -958,12 +1082,17 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     for (texture_id, start, count) in batches {
                         // Get texture with cached bind group
                         let texture = engine.textures.get(texture_id).ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!("Invalid texture ID: {}", texture_id))
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Invalid texture ID: {}",
+                                texture_id
+                            ))
                         })?;
 
                         // Use cached bind group
                         let bind_group = texture.bind_group.as_ref().ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err("Texture bind group not initialized")
+                            pyo3::exceptions::PyRuntimeError::new_err(
+                                "Texture bind group not initialized",
+                            )
                         })?;
 
                         render_pass.set_bind_group(1, bind_group, &[]);
@@ -994,15 +1123,18 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 #[pyfunction]
 pub fn draw_sprites_batch(sprite_id: u32, positions: Vec<f32>) -> PyResult<()> {
     crate::engine::with_engine(|engine| {
-        let device = engine.device.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Device not initialized")
-        })?;
-        let queue = engine.queue.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Queue not initialized")
-        })?;
-        let surface = engine.surface.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Surface not initialized")
-        })?;
+        let device = engine
+            .device
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Device not initialized"))?;
+        let queue = engine
+            .queue
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Queue not initialized"))?;
+        let surface = engine
+            .surface
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Surface not initialized"))?;
         let surface_config = engine.surface_config.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Surface config not initialized")
         })?;
@@ -1012,7 +1144,10 @@ pub fn draw_sprites_batch(sprite_id: u32, positions: Vec<f32>) -> PyResult<()> {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Invalid sprite ID: {}", sprite_id))
         })?;
         let texture = engine.textures.get(sprite.texture_id).ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Invalid texture ID: {}", sprite.texture_id))
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Invalid texture ID: {}",
+                sprite.texture_id
+            ))
         })?;
         let bind_group = texture.bind_group.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Texture bind group not initialized")
@@ -1070,9 +1205,14 @@ pub fn draw_sprites_batch(sprite_id: u32, positions: Vec<f32>) -> PyResult<()> {
 
         // Get surface texture
         let output = surface.get_current_texture().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to acquire surface texture: {}", e))
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Failed to acquire surface texture: {}",
+                e
+            ))
         })?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1083,19 +1223,27 @@ pub fn draw_sprites_batch(sprite_id: u32, positions: Vec<f32>) -> PyResult<()> {
         let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
         })?;
-        let sprite_bind_group_layout = engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Sprite bind group layout not initialized")
-        })?;
-        let sprite_projection_buffer = engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("Sprite projection buffer not initialized")
-        })?;
+        let sprite_bind_group_layout =
+            engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "Sprite bind group layout not initialized",
+                )
+            })?;
+        let sprite_projection_buffer =
+            engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "Sprite projection buffer not initialized",
+                )
+            })?;
 
         // Update projection
-        let projection = create_projection_matrix(
-            surface_config.width as f32,
-            surface_config.height as f32,
+        let projection =
+            create_projection_matrix(surface_config.width as f32, surface_config.height as f32);
+        queue.write_buffer(
+            sprite_projection_buffer,
+            0,
+            bytemuck::cast_slice(projection.as_ref()),
         );
-        queue.write_buffer(sprite_projection_buffer, 0, bytemuck::cast_slice(projection.as_ref()));
 
         let projection_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Batch Projection Bind Group"),
@@ -1145,11 +1293,14 @@ pub fn render_initial_frame(
     queue: &wgpu::Queue,
 ) -> Result<(), String> {
     // Get surface texture
-    let output = surface.get_current_texture()
+    let output = surface
+        .get_current_texture()
         .map_err(|e| format!("Failed to acquire surface texture: {}", e))?;
 
     // Create texture view
-    let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = output
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
 
     // Create command encoder
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

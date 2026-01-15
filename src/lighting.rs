@@ -6,10 +6,10 @@ pub type LightId = u32;
 #[derive(Debug, Clone)]
 pub struct Light {
     pub radius: f32,
-    pub color: [u8; 4],       // RGBA color (0-255)
-    pub intensity: f32,        // Light intensity multiplier (default 1.0)
-    pub flicker_amount: f32,   // Flicker amount (0.0 = no flicker)
-    pub flicker_speed: f32,    // Flicker speed
+    pub color: [u8; 4],      // RGBA color (0-255)
+    pub intensity: f32,      // Light intensity multiplier (default 1.0)
+    pub flicker_amount: f32, // Flicker amount (0.0 = no flicker)
+    pub flicker_speed: f32,  // Flicker speed
 }
 
 impl Light {
@@ -26,13 +26,13 @@ impl Light {
 
 /// Global lighting state
 pub struct LightingState {
-    pub ambient: [f32; 4],  // Ambient light color (0.0-1.0)
+    pub ambient: [f32; 4], // Ambient light color (0.0-1.0)
 }
 
 impl Default for LightingState {
     fn default() -> Self {
         Self {
-            ambient: [1.0, 1.0, 1.0, 1.0],  // Full white by default (no darkening)
+            ambient: [1.0, 1.0, 1.0, 1.0], // Full white by default (no darkening)
         }
     }
 }
@@ -48,9 +48,9 @@ impl LightingState {
 pub fn calculate_light_contribution(
     x: f32,
     y: f32,
-    lights: &[(f32, f32, &Light)],  // (x, y, light) tuples
+    lights: &[(f32, f32, &Light)], // (x, y, light) tuples
     ambient: [f32; 4],
-    time: f32,  // For flicker animation
+    time: f32, // For flicker animation
 ) -> [f32; 4] {
     // Start with ambient light
     let mut total_r = ambient[0];
@@ -95,7 +95,7 @@ pub fn calculate_light_contribution(
         total_r.min(1.0),
         total_g.min(1.0),
         total_b.min(1.0),
-        1.0,  // Alpha stays at 1.0
+        1.0, // Alpha stays at 1.0
     ]
 }
 

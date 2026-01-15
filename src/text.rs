@@ -1,6 +1,6 @@
-use pyo3::prelude::*;
 use crate::engine::with_engine;
 use crate::texture::TextureId;
+use pyo3::prelude::*;
 use std::collections::HashMap;
 
 pub type FontId = u32;
@@ -8,10 +8,10 @@ pub type FontId = u32;
 /// Information about a single glyph in the font atlas
 #[derive(Clone, Debug)]
 pub struct GlyphInfo {
-    pub uv: (f32, f32, f32, f32),  // u0, v0, u1, v1 in atlas
-    pub size: (f32, f32),           // width, height in pixels
-    pub offset: (f32, f32),         // x, y offset from baseline
-    pub advance: f32,               // horizontal advance
+    pub uv: (f32, f32, f32, f32), // u0, v0, u1, v1 in atlas
+    pub size: (f32, f32),         // width, height in pixels
+    pub offset: (f32, f32),       // x, y offset from baseline
+    pub advance: f32,             // horizontal advance
 }
 
 /// Font resource - contains fontdue font and glyph atlas texture
@@ -22,12 +22,15 @@ pub struct Font {
     pub glyphs: HashMap<char, GlyphInfo>,
     pub atlas_width: u32,
     pub atlas_height: u32,
-    pub smooth: bool,  // false = pixel-perfect (round coordinates)
+    pub smooth: bool, // false = pixel-perfect (round coordinates)
 }
 
 /// Create a font atlas from ASCII characters (32-126)
 /// Returns RGBA texture data, atlas dimensions, and glyph info map
-fn create_font_atlas(font: &fontdue::Font, size: f32) -> (Vec<u8>, u32, u32, HashMap<char, GlyphInfo>) {
+fn create_font_atlas(
+    font: &fontdue::Font,
+    size: f32,
+) -> (Vec<u8>, u32, u32, HashMap<char, GlyphInfo>) {
     // ASCII printable characters
     let chars: Vec<char> = (32u8..=126u8).map(|c| c as char).collect();
 
@@ -81,9 +84,9 @@ fn create_font_atlas(font: &fontdue::Font, size: f32) -> (Vec<u8>, u32, u32, Has
                 if bitmap_idx < bitmap.len() {
                     let alpha = bitmap[bitmap_idx];
                     // White color with varying alpha
-                    atlas_data[atlas_idx] = 255;      // R
-                    atlas_data[atlas_idx + 1] = 255;  // G
-                    atlas_data[atlas_idx + 2] = 255;  // B
+                    atlas_data[atlas_idx] = 255; // R
+                    atlas_data[atlas_idx + 1] = 255; // G
+                    atlas_data[atlas_idx + 2] = 255; // B
                     atlas_data[atlas_idx + 3] = alpha; // A
                 }
             }
@@ -101,12 +104,15 @@ fn create_font_atlas(font: &fontdue::Font, size: f32) -> (Vec<u8>, u32, u32, Has
         // To position correctly from top-left, we calculate: size - height - ymin
         let y_offset = size - glyph_height as f32 - metrics.ymin as f32;
 
-        glyphs.insert(c, GlyphInfo {
-            uv: (u0, v0, u1, v1),
-            size: (glyph_width as f32, glyph_height as f32),
-            offset: (metrics.xmin as f32, y_offset),
-            advance: metrics.advance_width,
-        });
+        glyphs.insert(
+            c,
+            GlyphInfo {
+                uv: (u0, v0, u1, v1),
+                size: (glyph_width as f32, glyph_height as f32),
+                offset: (metrics.xmin as f32, y_offset),
+                advance: metrics.advance_width,
+            },
+        );
 
         // Move to next position
         current_x += glyph_width + padding;
@@ -120,22 +126,30 @@ fn create_font_atlas(font: &fontdue::Font, size: f32) -> (Vec<u8>, u32, u32, Has
 pub fn font_load(path: &str, size: u32, smooth: bool) -> PyResult<FontId> {
     with_engine(|engine| {
         // Get device and queue
-        let device = engine.device.as_ref()
+        let device = engine
+            .device
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
-        let queue = engine.queue.as_ref()
+        let queue = engine
+            .queue
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
 
         // Load TTF font file
-        let font_data = std::fs::read(path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read font file: {}", e)))?;
+        let font_data = std::fs::read(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to read font file: {}", e))
+        })?;
 
         // Parse font with fontdue
         let fontdue_font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to parse font: {}", e)))?;
+            .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse font: {}", e))
+        })?;
 
         // Create glyph atlas
         let size_f32 = size as f32;
-        let (atlas_data, atlas_width, atlas_height, glyphs) = create_font_atlas(&fontdue_font, size_f32);
+        let (atlas_data, atlas_width, atlas_height, glyphs) =
+            create_font_atlas(&fontdue_font, size_f32);
 
         // Create wgpu texture for atlas
         let texture_size = wgpu::Extent3d {
@@ -249,7 +263,10 @@ pub fn font_free(font: FontId) -> PyResult<()> {
             engine.textures.remove(font.atlas_texture_id);
             Ok(())
         } else {
-            Err(pyo3::exceptions::PyValueError::new_err(format!("Invalid font ID: {}", font)))
+            Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid font ID: {}",
+                font
+            )))
         }
     })?
 }

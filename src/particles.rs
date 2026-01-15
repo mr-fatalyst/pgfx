@@ -1,7 +1,7 @@
-use pyo3::prelude::*;
-use pyo3::BoundObject;
 use crate::engine::with_engine;
 use crate::sprite::SpriteId;
+use pyo3::prelude::*;
+use pyo3::BoundObject;
 use std::f32::consts::PI;
 
 pub type ParticleSystemId = u32;
@@ -11,10 +11,10 @@ pub type ParticleSystemId = u32;
 struct Particle {
     position: [f32; 2],
     velocity: [f32; 2],
-    life: f32,          // Current lifetime
-    max_life: f32,      // Maximum lifetime
+    life: f32,     // Current lifetime
+    max_life: f32, // Maximum lifetime
     size: f32,
-    color: [f32; 4],    // RGBA 0-1
+    color: [f32; 4], // RGBA 0-1
 }
 
 impl Particle {
@@ -70,11 +70,11 @@ pub struct ParticleConfig {
     pub lifetime_max: f32,
     pub speed_min: f32,
     pub speed_max: f32,
-    pub direction: f32,         // Base direction in radians
-    pub spread: f32,            // Spread angle in radians
-    pub gravity: [f32; 2],      // Gravity acceleration (x, y)
-    pub start_color: [f32; 4],  // Start color RGBA 0-1
-    pub end_color: [f32; 4],    // End color RGBA 0-1
+    pub direction: f32,        // Base direction in radians
+    pub spread: f32,           // Spread angle in radians
+    pub gravity: [f32; 2],     // Gravity acceleration (x, y)
+    pub start_color: [f32; 4], // Start color RGBA 0-1
+    pub end_color: [f32; 4],   // End color RGBA 0-1
     pub start_size: f32,
     pub end_size: f32,
     pub emission_rate: f32,     // Particles per second
@@ -88,14 +88,14 @@ impl Default for ParticleConfig {
             lifetime_max: 2.0,
             speed_min: 50.0,
             speed_max: 100.0,
-            direction: -PI / 2.0,  // Up
-            spread: PI / 4.0,      // 45 degree spread
-            gravity: [0.0, 98.0],  // Gravity pointing down
-            start_color: [1.0, 1.0, 1.0, 1.0],  // White
-            end_color: [1.0, 1.0, 1.0, 0.0],    // Transparent white
+            direction: -PI / 2.0,              // Up
+            spread: PI / 4.0,                  // 45 degree spread
+            gravity: [0.0, 98.0],              // Gravity pointing down
+            start_color: [1.0, 1.0, 1.0, 1.0], // White
+            end_color: [1.0, 1.0, 1.0, 0.0],   // Transparent white
             start_size: 4.0,
             end_size: 0.0,
-            emission_rate: 0.0,    // Manual emission by default
+            emission_rate: 0.0, // Manual emission by default
             sprite_id: None,
         }
     }
@@ -106,7 +106,7 @@ pub(crate) struct ParticleSystem {
     pub(crate) config: ParticleConfig,
     particles: Vec<Particle>,
     max_particles: usize,
-    position: [f32; 2],         // Emitter position
+    position: [f32; 2], // Emitter position
     is_emitting: bool,
     emission_accumulator: f32,
 }
@@ -172,10 +172,7 @@ impl ParticleSystem {
         let angle = self.config.direction + angle_offset;
 
         // Calculate velocity
-        let velocity = [
-            angle.cos() * speed,
-            angle.sin() * speed,
-        ];
+        let velocity = [angle.cos() * speed, angle.sin() * speed];
 
         let mut particle = Particle::new();
         particle.position = self.position;
@@ -220,7 +217,10 @@ impl ParticleSystem {
 
     /// Generate draw commands for rendering particles
     /// Returns (cmd, sprite_id, x, y, rot, scale, flip_x, flip_y, r, g, b, a)
-    pub fn generate_draw_commands(&self, base_sprite_size: f32) -> Vec<(u8, u32, f32, f32, f32, f32, bool, bool, f32, f32, f32, f32)> {
+    pub fn generate_draw_commands(
+        &self,
+        base_sprite_size: f32,
+    ) -> Vec<(u8, u32, f32, f32, f32, f32, bool, bool, f32, f32, f32, f32)> {
         let mut commands = Vec::new();
 
         if let Some(sprite_id) = self.config.sprite_id {
@@ -233,10 +233,10 @@ impl ParticleSystem {
                     sprite_id,
                     particle.position[0],
                     particle.position[1],
-                    0.0,        // rotation
+                    0.0, // rotation
                     scale,
-                    false,      // flip_x
-                    false,      // flip_y
+                    false,             // flip_x
+                    false,             // flip_y
                     particle.color[0], // r
                     particle.color[1], // g
                     particle.color[2], // b
@@ -265,17 +265,7 @@ impl ParticleSystem {
             let a = (particle.color[3] * 255.0).clamp(0.0, 255.0) as u8;
 
             // Add rect_fill command
-            commands.push((
-                crate::renderer::CMD_RECT_FILL,
-                x,
-                y,
-                size,
-                size,
-                r,
-                g,
-                b,
-                a,
-            ));
+            commands.push((crate::renderer::CMD_RECT_FILL, x, y, size, size, r, g, b, a));
         }
 
         commands
@@ -283,7 +273,9 @@ impl ParticleSystem {
 }
 
 /// Parse particle configuration from Python kwargs
-fn parse_particle_config(kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> PyResult<ParticleConfig> {
+fn parse_particle_config(
+    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+) -> PyResult<ParticleConfig> {
     let mut config = ParticleConfig::default();
 
     if let Some(dict) = kwargs {
@@ -409,7 +401,7 @@ pub fn particles_load(path: &str) -> PyResult<ParticleSystemId> {
     // For now, we'll just return an error - JSON loading can be implemented later
     let _ = path;
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "particles_load is not yet implemented. Use particles_create instead."
+        "particles_load is not yet implemented. Use particles_create instead.",
     ))
 }
 
@@ -418,7 +410,7 @@ pub fn particles_load(path: &str) -> PyResult<ParticleSystemId> {
 pub fn particles_create(
     sprite: Option<SpriteId>,
     primitive: Option<&str>,
-    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>
+    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<ParticleSystemId> {
     // Parse configuration
     let config = parse_particle_config(kwargs)?;
@@ -444,20 +436,29 @@ pub fn particles_create(
             "circle" => crate::texture::PrimitiveType::Circle,
             "circle_soft" => crate::texture::PrimitiveType::CircleSoft,
             "square" | "pixel" => crate::texture::PrimitiveType::WhitePixel,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("Unknown primitive: '{}'. Use 'circle', 'circle_soft', 'square', or 'pixel'", prim)
-            )),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown primitive: '{}'. Use 'circle', 'circle_soft', 'square', or 'pixel'",
+                    prim
+                )))
+            }
         };
 
         with_engine(|engine| {
-            engine.get_or_create_primitive_sprite(prim_type)
-                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Failed to create primitive texture"))
+            engine
+                .get_or_create_primitive_sprite(prim_type)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Failed to create primitive texture")
+                })
         })??
     } else {
         // Default to circle_soft
         with_engine(|engine| {
-            engine.get_or_create_primitive_sprite(crate::texture::PrimitiveType::CircleSoft)
-                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Failed to create primitive texture"))
+            engine
+                .get_or_create_primitive_sprite(crate::texture::PrimitiveType::CircleSoft)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Failed to create primitive texture")
+                })
         })??
     };
 
@@ -486,7 +487,10 @@ pub fn particles_free(ps: ParticleSystemId) -> PyResult<()> {
 
 #[pyfunction]
 #[pyo3(signature = (ps, **kwargs))]
-pub fn particles_set(ps: ParticleSystemId, kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> PyResult<()> {
+pub fn particles_set(
+    ps: ParticleSystemId,
+    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+) -> PyResult<()> {
     let config = parse_particle_config(kwargs)?;
 
     with_engine(|engine| {
@@ -598,24 +602,32 @@ pub fn particles_render(py: Python<'_>, ps: ParticleSystemId) -> PyResult<Vec<Py
         if let Some(sprite_id) = system.config.sprite_id {
             // Render as sprites (textured particles)
             // Get sprite size for correct scaling (particle.size is in pixels)
-            let base_size = engine.sprites.get(sprite_id)
-                .map(|s| s.region.2 as f32)  // width of sprite region
-                .unwrap_or(32.0);  // fallback to primitive size
+            let base_size = engine
+                .sprites
+                .get(sprite_id)
+                .map(|s| s.region.2 as f32) // width of sprite region
+                .unwrap_or(32.0); // fallback to primitive size
 
             // Note: this returns Python commands, but internally we use renderer directly
             // Format: (cmd, sprite_id, x, y, rot, scale, flip_x, flip_y, r, g, b, a)
             for draw_cmd in system.generate_draw_commands(base_size) {
                 let items: Vec<Py<PyAny>> = vec![
-                    draw_cmd.0.into_pyobject(py)?.unbind().into(),  // CMD_DRAW_EX
-                    draw_cmd.1.into_pyobject(py)?.unbind().into(),  // sprite_id
-                    draw_cmd.2.into_pyobject(py)?.unbind().into(),  // x
-                    draw_cmd.3.into_pyobject(py)?.unbind().into(),  // y
-                    draw_cmd.4.into_pyobject(py)?.unbind().into(),  // rot
-                    draw_cmd.5.into_pyobject(py)?.unbind().into(),  // scale
-                    pyo3::types::PyBool::new(py, draw_cmd.6).into_bound().unbind().into(),  // flip_x
-                    pyo3::types::PyBool::new(py, draw_cmd.7).into_bound().unbind().into(),  // flip_y
-                    draw_cmd.8.into_pyobject(py)?.unbind().into(),  // r
-                    draw_cmd.9.into_pyobject(py)?.unbind().into(),  // g
+                    draw_cmd.0.into_pyobject(py)?.unbind().into(), // CMD_DRAW_EX
+                    draw_cmd.1.into_pyobject(py)?.unbind().into(), // sprite_id
+                    draw_cmd.2.into_pyobject(py)?.unbind().into(), // x
+                    draw_cmd.3.into_pyobject(py)?.unbind().into(), // y
+                    draw_cmd.4.into_pyobject(py)?.unbind().into(), // rot
+                    draw_cmd.5.into_pyobject(py)?.unbind().into(), // scale
+                    pyo3::types::PyBool::new(py, draw_cmd.6)
+                        .into_bound()
+                        .unbind()
+                        .into(), // flip_x
+                    pyo3::types::PyBool::new(py, draw_cmd.7)
+                        .into_bound()
+                        .unbind()
+                        .into(), // flip_y
+                    draw_cmd.8.into_pyobject(py)?.unbind().into(), // r
+                    draw_cmd.9.into_pyobject(py)?.unbind().into(), // g
                     draw_cmd.10.into_pyobject(py)?.unbind().into(), // b
                     draw_cmd.11.into_pyobject(py)?.unbind().into(), // a
                 ];
@@ -626,15 +638,15 @@ pub fn particles_render(py: Python<'_>, ps: ParticleSystemId) -> PyResult<Vec<Py
             // Render as colored quads (primitive particles)
             for vert_cmd in system.generate_vertices() {
                 let items: Vec<Py<PyAny>> = vec![
-                    vert_cmd.0.into_pyobject(py)?.unbind().into(),  // CMD_RECT_FILL
-                    vert_cmd.1.into_pyobject(py)?.unbind().into(),  // x
-                    vert_cmd.2.into_pyobject(py)?.unbind().into(),  // y
-                    vert_cmd.3.into_pyobject(py)?.unbind().into(),  // w
-                    vert_cmd.4.into_pyobject(py)?.unbind().into(),  // h
-                    vert_cmd.5.into_pyobject(py)?.unbind().into(),  // r
-                    vert_cmd.6.into_pyobject(py)?.unbind().into(),  // g
-                    vert_cmd.7.into_pyobject(py)?.unbind().into(),  // b
-                    vert_cmd.8.into_pyobject(py)?.unbind().into(),  // a
+                    vert_cmd.0.into_pyobject(py)?.unbind().into(), // CMD_RECT_FILL
+                    vert_cmd.1.into_pyobject(py)?.unbind().into(), // x
+                    vert_cmd.2.into_pyobject(py)?.unbind().into(), // y
+                    vert_cmd.3.into_pyobject(py)?.unbind().into(), // w
+                    vert_cmd.4.into_pyobject(py)?.unbind().into(), // h
+                    vert_cmd.5.into_pyobject(py)?.unbind().into(), // r
+                    vert_cmd.6.into_pyobject(py)?.unbind().into(), // g
+                    vert_cmd.7.into_pyobject(py)?.unbind().into(), // b
+                    vert_cmd.8.into_pyobject(py)?.unbind().into(), // a
                 ];
                 let tuple = pyo3::types::PyTuple::new(py, items.as_slice())?;
                 commands.push(tuple.unbind().into());

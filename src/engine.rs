@@ -45,7 +45,7 @@ pub struct Engine {
     pub(crate) sprite_texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub(crate) sprite_projection_buffer: Option<wgpu::Buffer>,
     pub(crate) sprite_vertex_buffer: Option<wgpu::Buffer>,
-    pub(crate) sprite_vertex_buffer_capacity: usize,  // in vertices
+    pub(crate) sprite_vertex_buffer_capacity: usize, // in vertices
 
     // Resources
     pub(crate) textures: crate::resources::ResourcePool<crate::texture::Texture>,
@@ -55,7 +55,8 @@ pub struct Engine {
     pub(crate) lights: crate::resources::ResourcePool<crate::lighting::Light>,
 
     // Cached primitive textures (circle, circle_soft, square)
-    pub(crate) primitive_textures: HashMap<PrimitiveType, (crate::texture::TextureId, crate::sprite::SpriteId)>,
+    pub(crate) primitive_textures:
+        HashMap<PrimitiveType, (crate::texture::TextureId, crate::sprite::SpriteId)>,
 
     // Lighting
     pub(crate) lighting: crate::lighting::LightingState,
@@ -105,11 +106,11 @@ impl Engine {
             primitive_textures: HashMap::new(),
             lighting: crate::lighting::LightingState::new(),
             input: crate::input::InputState::new(),
-            audio: None,  // Initialized on first use
-            gamepad: None,  // Initialized on first use
+            audio: None,   // Initialized on first use
+            gamepad: None, // Initialized on first use
             start_time: now,
             last_frame: now,
-            dt: 0.016,  // ~60 fps default
+            dt: 0.016, // ~60 fps default
             fps: 60,
             accumulator: 0.0,
             running: true,
@@ -137,7 +138,8 @@ impl Engine {
 
     pub(crate) fn reconfigure_surface(&mut self, width: u32, height: u32) {
         if let (Some(surface), Some(device), Some(config)) =
-            (&self.surface, &self.device, &mut self.surface_config) {
+            (&self.surface, &self.device, &mut self.surface_config)
+        {
             config.width = width;
             config.height = height;
             surface.configure(device, config);
@@ -145,7 +147,10 @@ impl Engine {
     }
 
     /// Get or create a primitive sprite (cached)
-    pub(crate) fn get_or_create_primitive_sprite(&mut self, primitive: PrimitiveType) -> Option<crate::sprite::SpriteId> {
+    pub(crate) fn get_or_create_primitive_sprite(
+        &mut self,
+        primitive: PrimitiveType,
+    ) -> Option<crate::sprite::SpriteId> {
         // Return cached if exists
         if let Some((_, sprite_id)) = self.primitive_textures.get(&primitive) {
             return Some(*sprite_id);
@@ -157,22 +162,28 @@ impl Engine {
         let layout = self.sprite_texture_bind_group_layout.as_ref();
 
         // Generate texture data
-        const CIRCLE_SIZE: u32 = 1024;  // Large for quality when scaling down
+        const CIRCLE_SIZE: u32 = 1024; // Large for quality when scaling down
         let (data, size, label) = match primitive {
-            PrimitiveType::Circle => (crate::texture::generate_circle_texture(CIRCLE_SIZE), CIRCLE_SIZE, "Primitive Circle"),
-            PrimitiveType::CircleSoft => (crate::texture::generate_circle_soft_texture(CIRCLE_SIZE), CIRCLE_SIZE, "Primitive Circle Soft"),
-            PrimitiveType::WhitePixel => (crate::texture::generate_white_pixel_texture(), 1, "Primitive White Pixel"),
+            PrimitiveType::Circle => (
+                crate::texture::generate_circle_texture(CIRCLE_SIZE),
+                CIRCLE_SIZE,
+                "Primitive Circle",
+            ),
+            PrimitiveType::CircleSoft => (
+                crate::texture::generate_circle_soft_texture(CIRCLE_SIZE),
+                CIRCLE_SIZE,
+                "Primitive Circle Soft",
+            ),
+            PrimitiveType::WhitePixel => (
+                crate::texture::generate_white_pixel_texture(),
+                1,
+                "Primitive White Pixel",
+            ),
         };
 
         // Create texture
         let texture = crate::texture::create_texture_from_rgba(
-            device,
-            queue,
-            layout,
-            &data,
-            size,
-            size,
-            label,
+            device, queue, layout, &data, size, size, label,
         );
 
         let texture_id = self.textures.insert(texture);
@@ -181,7 +192,9 @@ impl Engine {
         // Origin in pixels: WhitePixel at (0,0), circles at center
         let origin = match primitive {
             PrimitiveType::WhitePixel => (0.0, 0.0),
-            PrimitiveType::Circle | PrimitiveType::CircleSoft => (size as f32 / 2.0, size as f32 / 2.0),
+            PrimitiveType::Circle | PrimitiveType::CircleSoft => {
+                (size as f32 / 2.0, size as f32 / 2.0)
+            }
         };
         let sprite = crate::sprite::Sprite {
             texture_id,
@@ -192,7 +205,8 @@ impl Engine {
         let sprite_id = self.sprites.insert(sprite);
 
         // Cache it
-        self.primitive_textures.insert(primitive, (texture_id, sprite_id));
+        self.primitive_textures
+            .insert(primitive, (texture_id, sprite_id));
 
         Some(sprite_id)
     }
@@ -222,13 +236,16 @@ struct AppHandler {
 }
 
 impl AppHandler {
-    fn new(update_fn: Py<PyAny>, render_fn: Py<PyAny>, on_ready_fn: Option<Py<PyAny>>, fps_limit: u32) -> Self {
+    fn new(
+        update_fn: Py<PyAny>,
+        render_fn: Py<PyAny>,
+        on_ready_fn: Option<Py<PyAny>>,
+        fps_limit: u32,
+    ) -> Self {
         let loop_helper = if fps_limit > 0 {
-            spin_sleep::LoopHelper::builder()
-                .build_with_target_rate(fps_limit as f64)
+            spin_sleep::LoopHelper::builder().build_with_target_rate(fps_limit as f64)
         } else {
-            spin_sleep::LoopHelper::builder()
-                .build_without_target_rate()
+            spin_sleep::LoopHelper::builder().build_without_target_rate()
         };
 
         Self {
@@ -255,7 +272,8 @@ impl ApplicationHandler for AppHandler {
                     engine.config.resizable,
                     engine.config.fullscreen,
                 )
-            }).expect("Engine not initialized");
+            })
+            .expect("Engine not initialized");
 
             // Create window attributes - start hidden to avoid garbage frame
             let mut window_attrs = Window::default_attributes()
@@ -265,38 +283,48 @@ impl ApplicationHandler for AppHandler {
                 .with_visible(false);
 
             if fullscreen {
-                window_attrs = window_attrs.with_fullscreen(Some(
-                    winit::window::Fullscreen::Borderless(None)
-                ));
+                window_attrs =
+                    window_attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
             }
 
             // Create the window
-            let window = event_loop.create_window(window_attrs)
+            let window = event_loop
+                .create_window(window_attrs)
                 .expect("Failed to create window");
 
             // Store window in engine and get Arc reference for GPU initialization
             let window_arc = with_engine(|engine| {
                 engine.set_window(window);
                 engine.window.clone().expect("Window should be set")
-            }).expect("Engine not initialized");
+            })
+            .expect("Engine not initialized");
 
             // Initialize GPU
             match crate::renderer::init_gpu(window_arc) {
                 Ok((instance, surface, device, queue, surface_config)) => {
                     // Create sprite pipeline (used for everything)
-                    let (sprite_pipeline, sprite_bind_group_layout, sprite_texture_bind_group_layout, sprite_projection_buffer) =
-                        match crate::renderer::create_sprite_pipeline(&device, surface_config.format) {
-                            Ok(pipeline) => pipeline,
-                            Err(e) => {
-                                eprintln!("Failed to create sprite pipeline: {}", e);
-                                event_loop.exit();
-                                return;
-                            }
-                        };
+                    let (
+                        sprite_pipeline,
+                        sprite_bind_group_layout,
+                        sprite_texture_bind_group_layout,
+                        sprite_projection_buffer,
+                    ) = match crate::renderer::create_sprite_pipeline(
+                        &device,
+                        surface_config.format,
+                    ) {
+                        Ok(pipeline) => pipeline,
+                        Err(e) => {
+                            eprintln!("Failed to create sprite pipeline: {}", e);
+                            event_loop.exit();
+                            return;
+                        }
+                    };
 
                     with_engine(|engine| {
                         // Render initial black frame to clear garbage
-                        if let Err(e) = crate::renderer::render_initial_frame(&surface, &device, &queue) {
+                        if let Err(e) =
+                            crate::renderer::render_initial_frame(&surface, &device, &queue)
+                        {
                             eprintln!("Warning: Failed to render initial frame: {}", e);
                         }
 
@@ -308,9 +336,11 @@ impl ApplicationHandler for AppHandler {
                         engine.set_gpu(instance, surface, device, queue, surface_config);
                         engine.sprite_pipeline = Some(sprite_pipeline);
                         engine.sprite_bind_group_layout = Some(sprite_bind_group_layout);
-                        engine.sprite_texture_bind_group_layout = Some(sprite_texture_bind_group_layout);
+                        engine.sprite_texture_bind_group_layout =
+                            Some(sprite_texture_bind_group_layout);
                         engine.sprite_projection_buffer = Some(sprite_projection_buffer);
-                    }).expect("Engine not initialized");
+                    })
+                    .expect("Engine not initialized");
 
                     // Call on_ready callback if provided
                     if !self.ready_called {
@@ -345,14 +375,16 @@ impl ApplicationHandler for AppHandler {
             WindowEvent::CloseRequested => {
                 with_engine(|engine| {
                     engine.running = false;
-                }).ok();
+                })
+                .ok();
                 event_loop.exit();
             }
             WindowEvent::Resized(physical_size) => {
                 // Reconfigure surface with new size
                 with_engine(|engine| {
                     engine.reconfigure_surface(physical_size.width, physical_size.height);
-                }).ok();
+                })
+                .ok();
             }
             WindowEvent::RedrawRequested => {
                 // Start frame timing for FPS limit
@@ -379,7 +411,8 @@ impl ApplicationHandler for AppHandler {
                     }
 
                     true
-                }).unwrap_or(false);
+                })
+                .unwrap_or(false);
 
                 if !should_continue {
                     event_loop.exit();
@@ -390,19 +423,17 @@ impl ApplicationHandler for AppHandler {
                 let dt = with_engine(|engine| engine.dt as f64).unwrap_or(0.016);
                 let mut should_exit = false;
 
-                Python::attach(|py| {
-                    match self.update_fn.call1(py, (dt,)) {
-                        Ok(result) => {
-                            if let Ok(continue_running) = result.extract::<bool>(py) {
-                                if !continue_running {
-                                    should_exit = true;
-                                }
+                Python::attach(|py| match self.update_fn.call1(py, (dt,)) {
+                    Ok(result) => {
+                        if let Ok(continue_running) = result.extract::<bool>(py) {
+                            if !continue_running {
+                                should_exit = true;
                             }
                         }
-                        Err(e) => {
-                            eprintln!("Error in update function: {}", e);
-                            should_exit = true;
-                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error in update function: {}", e);
+                        should_exit = true;
                     }
                 });
 
@@ -423,7 +454,8 @@ impl ApplicationHandler for AppHandler {
                 // Clear per-frame input state
                 with_engine(|engine| {
                     engine.input.clear_frame_state();
-                }).ok();
+                })
+                .ok();
 
                 // Sleep to maintain target frame rate
                 self.loop_helper.loop_sleep();
@@ -461,7 +493,8 @@ impl ApplicationHandler for AppHandler {
                     window.request_redraw();
                 }
             }
-        }).ok();
+        })
+        .ok();
     }
 }
 
@@ -479,7 +512,7 @@ pub fn init(
     // Check if already initialized
     if ENGINE.get().is_some() {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "pgfx already initialized. Call quit() first."
+            "pgfx already initialized. Call quit() first.",
         ));
     }
 
@@ -495,20 +528,24 @@ pub fn init(
 
     let engine = Engine::new(config);
 
-    ENGINE.set(Mutex::new(engine)).map_err(|_| {
-        pyo3::exceptions::PyRuntimeError::new_err("Failed to initialize engine")
-    })?;
+    ENGINE
+        .set(Mutex::new(engine))
+        .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to initialize engine"))?;
 
     Ok(())
 }
 
 #[pyfunction]
 #[pyo3(signature = (update_fn, render_fn, on_ready=None))]
-pub fn run(update_fn: Py<PyAny>, render_fn: Py<PyAny>, on_ready: Option<Py<PyAny>>) -> PyResult<()> {
+pub fn run(
+    update_fn: Py<PyAny>,
+    render_fn: Py<PyAny>,
+    on_ready: Option<Py<PyAny>>,
+) -> PyResult<()> {
     // Check engine is initialized
     if ENGINE.get().is_none() {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "pgfx not initialized. Call init() first."
+            "pgfx not initialized. Call init() first.",
         ));
     }
 
@@ -557,16 +594,12 @@ pub fn fps() -> PyResult<u32> {
 
 #[pyfunction]
 pub fn time() -> PyResult<f64> {
-    with_engine(|engine| {
-        engine.start_time.elapsed().as_secs_f64()
-    })
+    with_engine(|engine| engine.start_time.elapsed().as_secs_f64())
 }
 
 #[pyfunction]
 pub fn screen_size() -> PyResult<(u32, u32)> {
-    with_engine(|engine| {
-        (engine.config.width, engine.config.height)
-    })
+    with_engine(|engine| (engine.config.width, engine.config.height))
 }
 
 #[cfg(test)]

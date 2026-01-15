@@ -1,22 +1,22 @@
+use gilrs::{Axis, Button, Gilrs};
 use pyo3::prelude::*;
 use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use gilrs::{Button, Axis, Gilrs};
 
 /// Input state for keyboard and mouse
 pub struct InputState {
     // Keyboard
-    pub keys_down: HashSet<u32>,      // currently held
-    pub keys_pressed: HashSet<u32>,   // pressed this frame
-    pub keys_released: HashSet<u32>,  // released this frame
+    pub keys_down: HashSet<u32>,     // currently held
+    pub keys_pressed: HashSet<u32>,  // pressed this frame
+    pub keys_released: HashSet<u32>, // released this frame
 
     // Mouse
     pub mouse_pos: (i32, i32),
-    pub mouse_down: [bool; 3],        // left, right, middle
-    pub mouse_pressed: [bool; 3],     // pressed this frame
-    pub mouse_released: [bool; 3],    // released this frame
-    pub mouse_wheel: i32,             // wheel delta this frame
+    pub mouse_down: [bool; 3],     // left, right, middle
+    pub mouse_pressed: [bool; 3],  // pressed this frame
+    pub mouse_released: [bool; 3], // released this frame
+    pub mouse_wheel: i32,          // wheel delta this frame
 }
 
 impl InputState {
@@ -87,8 +87,8 @@ impl InputState {
 #[derive(Clone)]
 pub struct GamepadState {
     pub connected: bool,
-    pub buttons: [bool; 20],  // Support up to 20 buttons
-    pub axes: [f32; 6],       // Left stick (2), right stick (2), triggers (2)
+    pub buttons: [bool; 20], // Support up to 20 buttons
+    pub axes: [f32; 6],      // Left stick (2), right stick (2), triggers (2)
 }
 
 impl GamepadState {
@@ -110,7 +110,7 @@ impl GamepadState {
 /// Gamepad manager using gilrs
 pub struct GamepadManager {
     gilrs: Gilrs,
-    gamepads: [GamepadState; 4],  // Support up to 4 gamepads
+    gamepads: [GamepadState; 4], // Support up to 4 gamepads
 }
 
 impl GamepadManager {
@@ -179,7 +179,9 @@ impl GamepadManager {
                 // For now, use a simple approach: map gamepad index to slot
                 if self.gilrs.gamepad(gamepad_id).is_connected() {
                     // Just use the first 4 connected gamepads
-                    let connected_count = self.gilrs.gamepads()
+                    let connected_count = self
+                        .gilrs
+                        .gamepads()
                         .filter(|(_, gp)| gp.is_connected())
                         .take_while(|(id, _)| *id != gamepad_id)
                         .count();
@@ -211,23 +213,23 @@ impl GamepadManager {
 /// Map gilrs button to our button index
 fn map_button(button: Button) -> Option<usize> {
     match button {
-        Button::South => Some(0),      // A on Xbox, Cross on PS
-        Button::East => Some(1),       // B on Xbox, Circle on PS
-        Button::West => Some(2),       // X on Xbox, Square on PS
-        Button::North => Some(3),      // Y on Xbox, Triangle on PS
+        Button::South => Some(0),         // A on Xbox, Cross on PS
+        Button::East => Some(1),          // B on Xbox, Circle on PS
+        Button::West => Some(2),          // X on Xbox, Square on PS
+        Button::North => Some(3),         // Y on Xbox, Triangle on PS
         Button::LeftTrigger => Some(4),   // L1/LB
         Button::RightTrigger => Some(5),  // R1/RB
         Button::LeftTrigger2 => Some(6),  // L2/LT (as button)
         Button::RightTrigger2 => Some(7), // R2/RT (as button)
-        Button::Select => Some(8),     // Select/Back/Share
-        Button::Start => Some(9),      // Start/Options
-        Button::LeftThumb => Some(10), // L3
-        Button::RightThumb => Some(11), // R3
+        Button::Select => Some(8),        // Select/Back/Share
+        Button::Start => Some(9),         // Start/Options
+        Button::LeftThumb => Some(10),    // L3
+        Button::RightThumb => Some(11),   // R3
         Button::DPadUp => Some(12),
         Button::DPadDown => Some(13),
         Button::DPadLeft => Some(14),
         Button::DPadRight => Some(15),
-        Button::Mode => Some(16),      // Guide/Home/PS button
+        Button::Mode => Some(16), // Guide/Home/PS button
         _ => None,
     }
 }
@@ -240,8 +242,8 @@ fn map_axis(axis: Axis) -> Option<usize> {
         Axis::LeftStickY => Some(1),
         Axis::RightStickX => Some(2),
         Axis::RightStickY => Some(3),
-        Axis::LeftZ => Some(4),      // Left trigger
-        Axis::RightZ => Some(5),     // Right trigger
+        Axis::LeftZ => Some(4),  // Left trigger
+        Axis::RightZ => Some(5), // Right trigger
         _ => None,
     }
 }
@@ -396,7 +398,8 @@ pub fn handle_keyboard_input(physical_key: PhysicalKey, pressed: bool) {
                 } else {
                     engine.input.on_key_up(pgfx_key);
                 }
-            }).ok();
+            })
+            .ok();
         }
     }
 }
@@ -405,7 +408,8 @@ pub fn handle_keyboard_input(physical_key: PhysicalKey, pressed: bool) {
 pub fn handle_mouse_move(x: f64, y: f64) {
     crate::engine::with_engine(|engine| {
         engine.input.on_mouse_move(x as i32, y as i32);
-    }).ok();
+    })
+    .ok();
 }
 
 /// Handle mouse button event from winit
@@ -417,7 +421,8 @@ pub fn handle_mouse_button(button: MouseButton, pressed: bool) {
             } else {
                 engine.input.on_mouse_up(index);
             }
-        }).ok();
+        })
+        .ok();
     }
 }
 
@@ -425,7 +430,8 @@ pub fn handle_mouse_button(button: MouseButton, pressed: bool) {
 pub fn handle_mouse_wheel(delta: f32) {
     crate::engine::with_engine(|engine| {
         engine.input.on_mouse_wheel(delta as i32);
-    }).ok();
+    })
+    .ok();
 }
 
 // Helper function to access gamepad manager with lazy initialization
@@ -437,7 +443,10 @@ where
         // Initialize gamepad on first use if not already initialized
         if engine.gamepad.is_none() {
             engine.gamepad = Some(GamepadManager::new().map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to initialize gamepad: {}", e))
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Failed to initialize gamepad: {}",
+                    e
+                ))
             })?);
         }
 
@@ -450,30 +459,22 @@ where
 
 #[pyfunction]
 pub fn key_down(key: u32) -> PyResult<bool> {
-    crate::engine::with_engine(|engine| {
-        engine.input.keys_down.contains(&key)
-    })
+    crate::engine::with_engine(|engine| engine.input.keys_down.contains(&key))
 }
 
 #[pyfunction]
 pub fn key_pressed(key: u32) -> PyResult<bool> {
-    crate::engine::with_engine(|engine| {
-        engine.input.keys_pressed.contains(&key)
-    })
+    crate::engine::with_engine(|engine| engine.input.keys_pressed.contains(&key))
 }
 
 #[pyfunction]
 pub fn key_released(key: u32) -> PyResult<bool> {
-    crate::engine::with_engine(|engine| {
-        engine.input.keys_released.contains(&key)
-    })
+    crate::engine::with_engine(|engine| engine.input.keys_released.contains(&key))
 }
 
 #[pyfunction]
 pub fn mouse_pos() -> PyResult<(i32, i32)> {
-    crate::engine::with_engine(|engine| {
-        engine.input.mouse_pos
-    })
+    crate::engine::with_engine(|engine| engine.input.mouse_pos)
 }
 
 #[pyfunction]
@@ -500,9 +501,7 @@ pub fn mouse_pressed(btn: u32) -> PyResult<bool> {
 
 #[pyfunction]
 pub fn mouse_wheel() -> PyResult<i32> {
-    crate::engine::with_engine(|engine| {
-        engine.input.mouse_wheel
-    })
+    crate::engine::with_engine(|engine| engine.input.mouse_wheel)
 }
 
 #[pyfunction]

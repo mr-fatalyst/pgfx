@@ -16,8 +16,7 @@ pub struct SoundData {
 impl SoundData {
     fn from_file(path: &str) -> Result<Self, String> {
         // Read entire file into memory
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read audio file: {}", e))?;
+        let data = std::fs::read(path).map_err(|e| format!("Failed to read audio file: {}", e))?;
 
         // Verify it can be decoded
         let cursor = Cursor::new(data.clone());
@@ -42,8 +41,7 @@ pub struct MusicData {
 impl MusicData {
     fn from_file(path: &str) -> Result<Self, String> {
         // Read entire file into memory
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read music file: {}", e))?;
+        let data = std::fs::read(path).map_err(|e| format!("Failed to read music file: {}", e))?;
 
         // Verify it can be decoded
         let cursor = Cursor::new(data.clone());
@@ -112,8 +110,16 @@ impl AudioState {
         self.sound_sinks.remove(&id);
     }
 
-    pub fn play_sound(&mut self, id: SoundId, volume: f32, _pan: f32, loop_: bool) -> Result<(), String> {
-        let sound = self.sounds.get(id)
+    pub fn play_sound(
+        &mut self,
+        id: SoundId,
+        volume: f32,
+        _pan: f32,
+        loop_: bool,
+    ) -> Result<(), String> {
+        let sound = self
+            .sounds
+            .get(id)
             .ok_or_else(|| format!("Invalid sound ID: {}", id))?;
 
         let mixer = self.output_stream.mixer();
@@ -129,7 +135,10 @@ impl AudioState {
         }
 
         // Store the sink so we can stop it later
-        self.sound_sinks.entry(id).or_insert_with(Vec::new).push(sink);
+        self.sound_sinks
+            .entry(id)
+            .or_insert_with(Vec::new)
+            .push(sink);
 
         // Clean up finished sinks
         if let Some(sinks) = self.sound_sinks.get_mut(&id) {
@@ -165,7 +174,9 @@ impl AudioState {
     }
 
     pub fn play_music(&mut self, id: MusicId, loop_: bool) -> Result<(), String> {
-        let music = self.music.get(id)
+        let music = self
+            .music
+            .get(id)
             .ok_or_else(|| format!("Invalid music ID: {}", id))?;
 
         // Stop current music if any
@@ -238,7 +249,10 @@ where
         // Initialize audio on first use if not already initialized
         if engine.audio.is_none() {
             engine.audio = Some(AudioState::new().map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to initialize audio: {}", e))
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Failed to initialize audio: {}",
+                    e
+                ))
             })?);
         }
 

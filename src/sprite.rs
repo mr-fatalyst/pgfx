@@ -1,6 +1,6 @@
-use pyo3::prelude::*;
 use crate::engine::with_engine;
 use crate::texture::TextureId;
+use pyo3::prelude::*;
 
 pub type SpriteId = u32;
 
@@ -8,9 +8,9 @@ pub type SpriteId = u32;
 #[derive(Clone)]
 pub struct Sprite {
     pub texture_id: TextureId,
-    pub region: (u32, u32, u32, u32),  // x, y, w, h in texture
-    pub origin: (f32, f32),             // pivot point in pixels, default (0, 0) = top-left
-    pub color: [u8; 4],                 // tint RGBA, default white
+    pub region: (u32, u32, u32, u32), // x, y, w, h in texture
+    pub origin: (f32, f32),           // pivot point in pixels, default (0, 0) = top-left
+    pub color: [u8; 4],               // tint RGBA, default white
 }
 
 impl Sprite {
@@ -19,8 +19,8 @@ impl Sprite {
         Self {
             texture_id,
             region,
-            origin: (0.0, 0.0),  // Top-left by default (like HGE)
-            color: [255, 255, 255, 255],  // White by default
+            origin: (0.0, 0.0),          // Top-left by default (like HGE)
+            color: [255, 255, 255, 255], // White by default
         }
     }
 }
@@ -46,9 +46,10 @@ pub fn sprite_create(tex: TextureId, x: u32, y: u32, w: u32, h: u32) -> PyResult
     with_engine(|engine| {
         // Verify texture exists
         if engine.textures.get(tex).is_none() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("Invalid texture ID: {}", tex)
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid texture ID: {}",
+                tex
+            )));
         }
 
         let sprite = Sprite::new(tex, (x, y, w, h));
@@ -61,7 +62,7 @@ pub fn sprite_create(tex: TextureId, x: u32, y: u32, w: u32, h: u32) -> PyResult
 pub fn sprite_sheet(path: &str, cols: u32, rows: u32) -> PyResult<Vec<SpriteId>> {
     if cols == 0 || rows == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
-            "Cols and rows must be greater than 0"
+            "Cols and rows must be greater than 0",
         ));
     }
 

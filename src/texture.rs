@@ -1,5 +1,5 @@
-use pyo3::prelude::*;
 use crate::engine::with_engine;
+use pyo3::prelude::*;
 
 pub type TextureId = u32;
 
@@ -17,7 +17,7 @@ pub struct Texture {
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub size: (u32, u32),
-    pub bind_group: Option<wgpu::BindGroup>,  // Cached bind group for rendering
+    pub bind_group: Option<wgpu::BindGroup>, // Cached bind group for rendering
 }
 
 /// Generate RGBA data for a solid circle
@@ -35,7 +35,7 @@ pub fn generate_circle_texture(size: u32) -> Vec<u8> {
             let idx = ((y * size + x) * 4) as usize;
             if dist <= radius {
                 // White opaque
-                data[idx] = 255;     // R
+                data[idx] = 255; // R
                 data[idx + 1] = 255; // G
                 data[idx + 2] = 255; // B
                 data[idx + 3] = 255; // A
@@ -62,7 +62,7 @@ pub fn generate_circle_soft_texture(size: u32) -> Vec<u8> {
             if dist <= radius {
                 // Soft falloff: alpha decreases from center to edge
                 let alpha = ((1.0 - dist / radius) * 255.0) as u8;
-                data[idx] = 255;     // R
+                data[idx] = 255; // R
                 data[idx + 1] = 255; // G
                 data[idx + 2] = 255; // B
                 data[idx + 3] = alpha; // A
@@ -74,7 +74,7 @@ pub fn generate_circle_soft_texture(size: u32) -> Vec<u8> {
 
 /// Generate RGBA data for a 1x1 white pixel
 pub fn generate_white_pixel_texture() -> Vec<u8> {
-    vec![255u8; 4]  // Single white opaque pixel
+    vec![255u8; 4] // Single white opaque pixel
 }
 
 /// Create a texture from RGBA data (internal helper)
@@ -164,14 +164,20 @@ pub(crate) fn create_texture_from_rgba(
 pub fn texture_load(path: &str) -> PyResult<TextureId> {
     with_engine(|engine| {
         // Get device and queue
-        let device = engine.device.as_ref()
+        let device = engine
+            .device
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
-        let queue = engine.queue.as_ref()
+        let queue = engine
+            .queue
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
 
         // Load image
         let img = image::open(path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to load image: {}", e)))?
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("Failed to load image: {}", e))
+            })?
             .to_rgba8();
         let dimensions = img.dimensions();
 
@@ -262,8 +268,9 @@ pub fn texture_load(path: &str) -> PyResult<TextureId> {
 #[pyfunction]
 pub fn texture_free(tex: TextureId) -> PyResult<()> {
     with_engine(|engine| {
-        engine.textures.remove(tex)
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Invalid texture ID: {}", tex)))?;
+        engine.textures.remove(tex).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid texture ID: {}", tex))
+        })?;
         Ok(())
     })?
 }
@@ -271,8 +278,9 @@ pub fn texture_free(tex: TextureId) -> PyResult<()> {
 #[pyfunction]
 pub fn texture_size(tex: TextureId) -> PyResult<(u32, u32)> {
     with_engine(|engine| {
-        let texture = engine.textures.get(tex)
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Invalid texture ID: {}", tex)))?;
+        let texture = engine.textures.get(tex).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid texture ID: {}", tex))
+        })?;
         Ok(texture.size)
     })?
 }
