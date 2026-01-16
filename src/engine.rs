@@ -63,9 +63,6 @@ pub struct Engine {
     // Input
     pub(crate) input: crate::input::InputState,
 
-    // Audio
-    pub(crate) audio: Option<crate::audio::AudioState>,
-
     // Gamepad
     pub(crate) gamepad: Option<crate::input::GamepadManager>,
 
@@ -104,7 +101,6 @@ impl Engine {
             primitive_textures: HashMap::new(),
             lighting: crate::lighting::LightingState::new(),
             input: crate::input::InputState::new(),
-            audio: None,   // Initialized on first use
             gamepad: None, // Initialized on first use
             start_time: now,
             last_frame: now,

@@ -1,12 +1,18 @@
 use pyo3::prelude::*;
 use rodio::cpal::BufferSize;
 use rodio::{Decoder, OutputStreamBuilder, Source};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
 pub type SoundId = u32;
 pub type MusicId = u32;
+
+// Thread-local audio state (OutputStream is not Send on macOS)
+thread_local! {
+    static AUDIO: RefCell<Option<AudioState>> = const { RefCell::new(None) };
+}
 
 /// Sound data - raw file bytes in memory, decoded on playback
 pub struct SoundData {
@@ -237,15 +243,17 @@ impl AudioState {
     }
 }
 
-// Helper function to access audio state
+// Helper function to access audio state (thread-local)
 fn with_audio<F, R>(f: F) -> PyResult<R>
 where
     F: FnOnce(&mut AudioState) -> Result<R, String>,
 {
-    crate::engine::with_engine(|engine| {
+    AUDIO.with(|audio_cell| {
+        let mut audio_opt = audio_cell.borrow_mut();
+
         // Initialize audio on first use if not already initialized
-        if engine.audio.is_none() {
-            engine.audio = Some(AudioState::new().map_err(|e| {
+        if audio_opt.is_none() {
+            *audio_opt = Some(AudioState::new().map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Failed to initialize audio: {}",
                     e
@@ -253,9 +261,9 @@ where
             })?);
         }
 
-        let audio = engine.audio.as_mut().unwrap();
+        let audio = audio_opt.as_mut().unwrap();
         f(audio).map_err(pyo3::exceptions::PyRuntimeError::new_err)
-    })?
+    })
 }
 
 #[pyfunction]
