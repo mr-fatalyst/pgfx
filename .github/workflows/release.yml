@@ -87,17 +87,36 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  test-wheels:
+    name: Test wheels
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: dist
+
+      - name: Install and test
+        run: |
+          pip install dist/*.whl
+          python -c "import pgfx; print('pgfx imported successfully')"
+
   publish:
     name: Publish to PyPI
-    needs: [build-linux, build-macos, build-windows, build-sdist]
+    needs: [build-linux, build-macos, build-windows, build-sdist, test-wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/pgfx/
-    permissions:
-      id-token: write
 
     steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
       - name: Download all wheels
         uses: actions/download-artifact@v4
         with:
@@ -109,7 +128,9 @@ jobs:
         run: ls -la dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish dist/*
 
   release:
     name: GitHub Release
