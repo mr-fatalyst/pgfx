@@ -25,7 +25,4 @@ def render():
 
 
 pgfx.run(update, render, on_ready=on_ready)
-
-if tex:
-    pgfx.texture_free(tex)
-    print("Texture freed")
+# run() tears the engine down on exit - all resources are freed automatically

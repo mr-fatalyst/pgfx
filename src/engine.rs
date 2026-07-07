@@ -1,16 +1,31 @@
 use pyo3::prelude::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{Window, WindowId};
 
 use crate::texture::PrimitiveType;
 
-/// Global engine instance
-static ENGINE: OnceLock<Mutex<Engine>> = OnceLock::new();
+/// Global engine instance; None = not initialized. quit() (or run() returning)
+/// drops the state so init() can be called again.
+static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
+
+/// True while run() is inside the event loop — quit() then only stops the
+/// loop and lets run() do the teardown after the loop unwinds.
+static LOOP_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+// winit does not support re-creating the event loop, so it is created once
+// per process and reused across init/quit cycles via run_app_on_demand().
+// EventLoop is !Send; run() must be called from the main thread anyway.
+thread_local! {
+    static EVENT_LOOP: RefCell<Option<EventLoop<()>>> = const { RefCell::new(None) };
+}
 
 /// Engine configuration passed to init()
 #[derive(Debug, Clone)]
@@ -28,15 +43,17 @@ pub struct Engine {
     // Configuration
     pub(crate) config: EngineConfig,
 
-    // Window
-    pub(crate) window: Option<Arc<Window>>,
-
-    // GPU
+    // GPU. Declared before `window`: struct fields drop in declaration order,
+    // and the surface (created unsafely from the window) must be destroyed
+    // before the window it points at.
     pub(crate) instance: Option<wgpu::Instance>,
     pub(crate) surface: Option<wgpu::Surface<'static>>,
     pub(crate) device: Option<wgpu::Device>,
     pub(crate) queue: Option<wgpu::Queue>,
     pub(crate) surface_config: Option<wgpu::SurfaceConfiguration>,
+
+    // Window
+    pub(crate) window: Option<Arc<Window>>,
 
     // Sprite rendering pipeline (used for everything - sprites, primitives, text)
     pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
@@ -215,12 +232,11 @@ pub fn with_engine<F, R>(f: F) -> PyResult<R>
 where
     F: FnOnce(&mut Engine) -> R,
 {
-    let engine = ENGINE.get().ok_or_else(|| {
+    let mut guard = ENGINE.lock().unwrap();
+    let engine = guard.as_mut().ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err("pgfx not initialized. Call init() first.")
     })?;
-
-    let mut guard = engine.lock().unwrap();
-    Ok(f(&mut guard))
+    Ok(f(engine))
 }
 
 /// Simple frame rate limiter
@@ -539,11 +555,10 @@ pub fn init(
     resizable: bool,
     fps_limit: u32,
 ) -> PyResult<()> {
-    // Check if already initialized
-    if ENGINE.get().is_some() {
+    let mut guard = ENGINE.lock().unwrap();
+    if guard.is_some() {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "pgfx already initialized; re-initialization is not supported yet \
-             (restart the process to create a new window)",
+            "pgfx already initialized. Call quit() first.",
         ));
     }
 
@@ -556,11 +571,7 @@ pub fn init(
         fps_limit,
     };
 
-    let engine = Engine::new(config);
-
-    ENGINE
-        .set(Mutex::new(engine))
-        .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to initialize engine"))?;
+    *guard = Some(Engine::new(config));
 
     Ok(())
 }
@@ -573,29 +584,41 @@ pub fn run(
     render_fn: Py<PyAny>,
     on_ready: Option<Py<PyAny>>,
 ) -> PyResult<()> {
-    // Check engine is initialized
-    if ENGINE.get().is_none() {
+    // Get fps_limit from config (also errors if not initialized)
+    let fps_limit = with_engine(|engine| engine.config.fps_limit)?;
+
+    if LOOP_ACTIVE.swap(true, Ordering::SeqCst) {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "pgfx not initialized. Call init() first.",
+            "run() is already running; it cannot be called from a callback",
         ));
     }
-
-    // Get fps_limit from config
-    let fps_limit = with_engine(|engine| engine.config.fps_limit)?;
 
     // Create application handler
     let mut app = AppHandler::new(update_fn, render_fn, on_ready, fps_limit);
 
     // Release the GIL for the whole loop so user Python threads keep running;
-    // callbacks re-acquire it via Python::attach. The event loop is created
-    // inside the closure because EventLoop is not Send.
+    // callbacks re-acquire it via Python::attach. The event loop lives in a
+    // thread_local (EventLoop is not Send) and is reused across init/quit
+    // cycles via run_app_on_demand.
     let loop_result: Result<(), String> = py.detach(|| {
-        let event_loop =
-            EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
-        event_loop
-            .run_app(&mut app)
-            .map_err(|e| format!("Event loop error: {}", e))
+        EVENT_LOOP.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(
+                    EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?,
+                );
+            }
+            slot.as_mut()
+                .unwrap()
+                .run_app_on_demand(&mut app)
+                .map_err(|e| format!("Event loop error: {}", e))
+        })
     });
+
+    // The loop has ended: tear the engine down (drops the window and GPU
+    // state) so init() can be called again.
+    LOOP_ACTIVE.store(false, Ordering::SeqCst);
+    *ENGINE.lock().unwrap() = None;
 
     // A Python exception from a callback takes precedence over loop errors
     if let Some(err) = app.error.take() {
@@ -608,16 +631,22 @@ pub fn run(
 
 #[pyfunction]
 pub fn quit() -> PyResult<()> {
-    with_engine(|engine| {
-        engine.running = false;
-    })?;
-
-    // Clear the global state
-    // Note: OnceLock doesn't have a clear method, so we just mark as not running
-    // The actual cleanup will happen when the process exits or when we implement
-    // a more sophisticated cleanup mechanism
-
-    Ok(())
+    if LOOP_ACTIVE.load(Ordering::SeqCst) {
+        // Inside run(): stop the loop; run() tears the engine down after the
+        // event loop unwinds (handlers still access the engine until then)
+        with_engine(|engine| {
+            engine.running = false;
+        })
+    } else {
+        // Outside run(): drop the engine state immediately
+        let mut guard = ENGINE.lock().unwrap();
+        if guard.take().is_none() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "pgfx not initialized. Call init() first.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[pyfunction]

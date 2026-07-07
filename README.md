@@ -167,8 +167,8 @@ get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 | Function | Description |
 |----------|-------------|
 | `init(width, height, title, **opts)` | Initialize window. Options: `fullscreen`, `resizable`, `fps_limit` (frames per second cap, `0` = uncapped; VSync is always on) |
-| `run(update_fn, render_fn, on_ready=None)` | Start game loop. `update_fn(dt)` returns `False` to quit; `on_ready()` is called once when the GPU is initialized. Exceptions raised in callbacks propagate out of `run()` |
-| `quit()` | Exit game loop |
+| `run(update_fn, render_fn, on_ready=None)` | Start game loop. `update_fn(dt)` returns `False` to quit; `on_ready()` is called once when the GPU is initialized. Exceptions raised in callbacks propagate out of `run()`. When `run()` returns, the window is closed, all resources are freed and pgfx is deinitialized — call `init()` to start again |
+| `quit()` | Exit game loop (from a callback) or deinitialize pgfx (outside of `run()`) |
 | `dt()` | Delta time in seconds |
 | `fps()` | Current FPS (averaged over ~0.5s) |
 | `time()` | Time since init |

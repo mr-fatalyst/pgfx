@@ -41,6 +41,11 @@ features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "pgfx._native"
 
+[tool.pytest.ini_options]
+markers = [
+    "gpu: requires a display and GPU (run with xvfb + software Vulkan in CI)",
+]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 100
