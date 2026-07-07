@@ -143,6 +143,10 @@ pgfx.light_draw(torch, player_x, player_y)
 
 ## Notes
 
+**Coordinates.** The whole API works in logical pixels — the units you pass
+to `init()`. On HiDPI displays (Retina, 2x scale) the content is scaled up
+automatically; `screen_size()` and `mouse_pos()` stay in logical pixels.
+
 **Draw order.** Everything is drawn back-to-front by `z` (default 0, higher =
 on top). Within the same `z`, all commands — sprites, primitives, text,
 lights and particles — keep their call order.
@@ -179,7 +183,7 @@ skipped entirely.
 | `dt()` | Delta time in seconds |
 | `fps()` | Current FPS (averaged over ~0.5s) |
 | `time()` | Time since init |
-| `screen_size()` | Returns `(width, height)` |
+| `screen_size()` | Current window size in logical pixels (tracks resize and fullscreen) |
 
 ### Input (11)
 

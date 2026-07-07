@@ -1384,8 +1384,13 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     )
                 })?;
 
-            let projection =
-                create_projection_matrix(surface_config.width as f32, surface_config.height as f32);
+            // Project logical coordinates onto the physical surface: the
+            // user draws in the units passed to init(), HiDPI scales up
+            let scale = engine.scale_factor as f32;
+            let projection = create_projection_matrix(
+                surface_config.width as f32 / scale,
+                surface_config.height as f32 / scale,
+            );
             queue.write_buffer(
                 sprite_projection_buffer,
                 0,

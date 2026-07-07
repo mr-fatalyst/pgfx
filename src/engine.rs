@@ -54,6 +54,8 @@ pub struct Engine {
 
     // Window
     pub(crate) window: Option<Arc<Window>>,
+    // HiDPI: the user API works in logical pixels; physical = logical * scale
+    pub(crate) scale_factor: f64,
 
     // Sprite rendering pipeline (used for everything - sprites, primitives, text)
     pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
@@ -114,6 +116,7 @@ impl Engine {
         Self {
             config,
             window: None,
+            scale_factor: 1.0,
             instance: None,
             surface: None,
             device: None,
@@ -153,6 +156,7 @@ impl Engine {
     }
 
     fn set_window(&mut self, window: Window) {
+        self.scale_factor = window.scale_factor();
         self.window = Some(Arc::new(window));
     }
 
@@ -462,6 +466,14 @@ impl ApplicationHandler for AppHandler {
                 })
                 .ok();
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // Window moved to a display with a different DPI; a Resized
+                // event with the new physical size follows separately
+                with_engine(|engine| {
+                    engine.scale_factor = scale_factor;
+                })
+                .ok();
+            }
             WindowEvent::RedrawRequested => {
                 // Start frame timing for FPS limit
                 self.frame_limiter.frame_start();
@@ -698,7 +710,19 @@ pub fn time() -> PyResult<f64> {
 
 #[pyfunction]
 pub fn screen_size() -> PyResult<(u32, u32)> {
-    with_engine(|engine| (engine.config.width, engine.config.height))
+    with_engine(|engine| {
+        // Actual window size in logical pixels (tracks resize, fullscreen
+        // and HiDPI); before the window exists, the requested size
+        if let Some(config) = &engine.surface_config {
+            let scale = engine.scale_factor;
+            (
+                (config.width as f64 / scale).round() as u32,
+                (config.height as f64 / scale).round() as u32,
+            )
+        } else {
+            (engine.config.width, engine.config.height)
+        }
+    })
 }
 
 #[cfg(test)]

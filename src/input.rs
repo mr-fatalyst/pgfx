@@ -457,10 +457,13 @@ pub fn handle_keyboard_input(physical_key: PhysicalKey, pressed: bool) {
     }
 }
 
-/// Handle mouse move event from winit
+/// Handle mouse move event from winit (physical -> logical pixels)
 pub fn handle_mouse_move(x: f64, y: f64) {
     crate::engine::with_engine(|engine| {
-        engine.input.on_mouse_move(x as i32, y as i32);
+        let scale = engine.scale_factor;
+        engine
+            .input
+            .on_mouse_move((x / scale) as i32, (y / scale) as i32);
     })
     .ok();
 }
