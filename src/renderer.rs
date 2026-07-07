@@ -15,6 +15,12 @@ pub const CMD_LIGHT_DRAW: u8 = 8;
 pub const CMD_SET_VIEW: u8 = 9;
 pub const CMD_RESET_VIEW: u8 = 10;
 
+// Text alignment (the x of a text() call anchors each line's left edge,
+// center or right edge)
+pub const TEXT_ALIGN_LEFT: u8 = 0;
+pub const TEXT_ALIGN_CENTER: u8 = 1;
+pub const TEXT_ALIGN_RIGHT: u8 = 2;
+
 /// 2D affine view transform: screen = (a*x + c*y + tx, b*x + d*y + ty),
 /// stored as [a, b, c, d, tx, ty]. `None` on a command means identity
 /// (screen space).
@@ -211,6 +217,7 @@ struct TextDrawCommand {
     z: i32,
     seq: u32,
     view: Option<View>,
+    align: u8,
 }
 
 /// A single draw command in the unified stream. Everything is sorted by
@@ -381,103 +388,109 @@ fn generate_text_vertices(
     };
     let (atlas_w, atlas_h) = (atlas_size.0 as f32, atlas_size.1 as f32);
 
-    let mut cursor_x = base_x;
     let mut cursor_y = base_y;
-    let mut prev_ch: Option<char> = None;
-
-    for ch in cmd.text.chars() {
-        if ch == '\n' {
-            cursor_x = base_x;
-            cursor_y += font.line_height;
-            prev_ch = None;
-            continue;
-        }
-        if ch == '\r' {
-            continue;
-        }
-
-        if let Some(prev) = prev_ch {
-            if let Some(kern) = font.kern(prev, ch) {
-                cursor_x += kern;
-            }
-        }
-        prev_ch = Some(ch);
-
-        let glyph_info = match font.glyphs.get(&ch) {
-            Some(g) => g,
-            None => continue,
+    for line in cmd.text.split('\n') {
+        // x anchors each line's left edge, center or right edge
+        let mut cursor_x = match cmd.align {
+            TEXT_ALIGN_CENTER => base_x - font.line_width(line) / 2.0,
+            TEXT_ALIGN_RIGHT => base_x - font.line_width(line),
+            _ => base_x,
         };
+        if !font.smooth {
+            cursor_x = cursor_x.floor();
+        }
+        let mut prev_ch: Option<char> = None;
 
-        let (rect_x, rect_y, rect_w, rect_h) = glyph_info.rect;
-        // Empty rect = whitespace or unrenderable glyph: advance only
-        if rect_w > 0 && rect_h > 0 {
-            // For pixel-perfect fonts, round glyph positions
-            let (glyph_x, glyph_y) = if font.smooth {
-                (
-                    cursor_x + glyph_info.offset.0,
-                    cursor_y + glyph_info.offset.1,
-                )
-            } else {
-                (
-                    (cursor_x + glyph_info.offset.0).floor(),
-                    (cursor_y + glyph_info.offset.1).floor(),
-                )
+        for ch in line.chars() {
+            if ch.is_control() {
+                continue;
+            }
+
+            if let Some(prev) = prev_ch {
+                if let Some(kern) = font.kern(prev, ch) {
+                    cursor_x += kern;
+                }
+            }
+            prev_ch = Some(ch);
+
+            let glyph_info = match font.glyphs.get(&ch) {
+                Some(g) => g,
+                None => continue,
             };
 
-            let u0 = rect_x as f32 / atlas_w;
-            let v0 = rect_y as f32 / atlas_h;
-            let u1 = (rect_x + rect_w) as f32 / atlas_w;
-            let v1 = (rect_y + rect_h) as f32 / atlas_h;
+            let (rect_x, rect_y, rect_w, rect_h) = glyph_info.rect;
+            // Empty rect = whitespace or unrenderable glyph: advance only
+            if rect_w > 0 && rect_h > 0 {
+                // For pixel-perfect fonts, round glyph positions
+                let (glyph_x, glyph_y) = if font.smooth {
+                    (
+                        cursor_x + glyph_info.offset.0,
+                        cursor_y + glyph_info.offset.1,
+                    )
+                } else {
+                    (
+                        (cursor_x + glyph_info.offset.0).floor(),
+                        (cursor_y + glyph_info.offset.1).floor(),
+                    )
+                };
 
-            // Two triangles per glyph quad, through the view transform
-            // (camera) captured at call time
-            let x0 = glyph_x;
-            let y0 = glyph_y;
-            let x1 = glyph_x + rect_w as f32;
-            let y1 = glyph_y + rect_h as f32;
-            let (p00, p10, p01, p11) = match &cmd.view {
-                Some(v) => (
-                    view_apply(v, x0, y0),
-                    view_apply(v, x1, y0),
-                    view_apply(v, x0, y1),
-                    view_apply(v, x1, y1),
-                ),
-                None => ([x0, y0], [x1, y0], [x0, y1], [x1, y1]),
-            };
+                let u0 = rect_x as f32 / atlas_w;
+                let v0 = rect_y as f32 / atlas_h;
+                let u1 = (rect_x + rect_w) as f32 / atlas_w;
+                let v1 = (rect_y + rect_h) as f32 / atlas_h;
 
-            out.push(SpriteVertex {
-                position: p00,
-                tex_coords: [u0, v0],
-                color,
-            });
-            out.push(SpriteVertex {
-                position: p10,
-                tex_coords: [u1, v0],
-                color,
-            });
-            out.push(SpriteVertex {
-                position: p01,
-                tex_coords: [u0, v1],
-                color,
-            });
-            out.push(SpriteVertex {
-                position: p10,
-                tex_coords: [u1, v0],
-                color,
-            });
-            out.push(SpriteVertex {
-                position: p11,
-                tex_coords: [u1, v1],
-                color,
-            });
-            out.push(SpriteVertex {
-                position: p01,
-                tex_coords: [u0, v1],
-                color,
-            });
+                // Two triangles per glyph quad, through the view transform
+                // (camera) captured at call time
+                let x0 = glyph_x;
+                let y0 = glyph_y;
+                let x1 = glyph_x + rect_w as f32;
+                let y1 = glyph_y + rect_h as f32;
+                let (p00, p10, p01, p11) = match &cmd.view {
+                    Some(v) => (
+                        view_apply(v, x0, y0),
+                        view_apply(v, x1, y0),
+                        view_apply(v, x0, y1),
+                        view_apply(v, x1, y1),
+                    ),
+                    None => ([x0, y0], [x1, y0], [x0, y1], [x1, y1]),
+                };
+
+                out.push(SpriteVertex {
+                    position: p00,
+                    tex_coords: [u0, v0],
+                    color,
+                });
+                out.push(SpriteVertex {
+                    position: p10,
+                    tex_coords: [u1, v0],
+                    color,
+                });
+                out.push(SpriteVertex {
+                    position: p01,
+                    tex_coords: [u0, v1],
+                    color,
+                });
+                out.push(SpriteVertex {
+                    position: p10,
+                    tex_coords: [u1, v0],
+                    color,
+                });
+                out.push(SpriteVertex {
+                    position: p11,
+                    tex_coords: [u1, v1],
+                    color,
+                });
+                out.push(SpriteVertex {
+                    position: p01,
+                    tex_coords: [u0, v1],
+                    color,
+                });
+            }
+
+            cursor_x += glyph_info.advance;
         }
 
-        cursor_x += glyph_info.advance;
+        cursor_y += font.line_height;
     }
 }
 
@@ -1027,7 +1040,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             }
 
                             CMD_TEXT => {
-                                // (CMD_TEXT, font_id, string, x, y, r, g, b, a, z)
+                                // (CMD_TEXT, font_id, string, x, y, r, g, b, a, z, align)
                                 let font_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let text = tuple.get_item(2)?.extract::<String>()?;
                                 let x = tuple.get_item(3)?.extract::<f32>()?;
@@ -1037,6 +1050,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let b = tuple.get_item(7)?.extract::<u8>()?;
                                 let a = tuple.get_item(8)?.extract::<u8>()?;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
+                                let align = tuple.get_item(10)?.extract::<u8>()?;
 
                                 items.push(DrawItem::Text(TextDrawCommand {
                                     font_id,
@@ -1047,6 +1061,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     z,
                                     seq,
                                     view: current_view,
+                                    align,
                                 }));
                             }
 
@@ -1736,6 +1751,7 @@ mod tests {
             z,
             seq,
             view: None,
+            align: TEXT_ALIGN_LEFT,
         })
     }
 

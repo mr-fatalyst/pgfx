@@ -57,9 +57,16 @@ def circle_fill(x, y, r, color, z=0):
     _commands.append((CMD_CIRCLE_FILL, x, y, r, color.r, color.g, color.b, color.a, z))
 
 
-def text(font, string, x, y, color, z=0):
-    """Draw text."""
-    _commands.append((CMD_TEXT, font, string, x, y, color.r, color.g, color.b, color.a, z))
+_TEXT_ALIGN = {"left": 0, "center": 1, "right": 2}
+
+
+def text(font, string, x, y, color, z=0, align="left"):
+    """Draw text. align ("left"/"center"/"right") sets what x anchors:
+    each line's left edge, center or right edge."""
+    a = _TEXT_ALIGN.get(align)
+    if a is None:
+        raise ValueError(f"align must be 'left', 'center' or 'right', got {align!r}")
+    _commands.append((CMD_TEXT, font, string, x, y, color.r, color.g, color.b, color.a, z, a))
 
 
 def particles_render(ps, z=0):

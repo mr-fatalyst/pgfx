@@ -55,6 +55,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Text
     m.add_function(wrap_pyfunction!(text::font_load, m)?)?;
+    m.add_function(wrap_pyfunction!(text::text_size, m)?)?;
     m.add_function(wrap_pyfunction!(text::font_free, m)?)?;
 
     // Collision

@@ -77,6 +77,7 @@ from pgfx._native import (
     sprite_set_color,
     sprite_set_origin,
     sprite_sheet,
+    text_size,
     texture_free,
     # Texture
     texture_load,

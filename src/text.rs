@@ -82,6 +82,58 @@ impl Font {
         self.font.horizontal_kern(left, right, self.size)
     }
 
+    /// The glyph actually drawn for `ch`: the char itself, the white square
+    /// (tofu) if the font lacks it, or the font's .notdef as a last resort
+    fn glyph_source(&self, ch: char) -> char {
+        if self.font.lookup_glyph_index(ch) != 0 {
+            ch
+        } else if self.font.lookup_glyph_index('\u{25A1}') != 0 {
+            '\u{25A1}'
+        } else {
+            ch // index 0 rasterizes the font's .notdef glyph
+        }
+    }
+
+    /// Horizontal advance of one character: from the glyph cache when
+    /// available, otherwise straight from the font metrics (no rasterization)
+    fn advance(&self, ch: char) -> f32 {
+        if let Some(glyph) = self.glyphs.get(&ch) {
+            return glyph.advance;
+        }
+        self.font.metrics(self.glyph_source(ch), self.size).advance_width
+    }
+
+    /// Width of a single line in logical pixels (advances + kerning;
+    /// control characters are skipped — same rules as rendering)
+    pub fn line_width(&self, line: &str) -> f32 {
+        let mut width = 0.0;
+        let mut prev: Option<char> = None;
+        for ch in line.chars() {
+            if ch.is_control() {
+                continue;
+            }
+            if let Some(p) = prev {
+                if let Some(kern) = self.kern(p, ch) {
+                    width += kern;
+                }
+            }
+            prev = Some(ch);
+            width += self.advance(ch);
+        }
+        width
+    }
+
+    /// Size of a text block: (widest line, line count * line height)
+    pub fn measure(&self, text: &str) -> (f32, f32) {
+        let mut width: f32 = 0.0;
+        let mut lines = 0u32;
+        for line in text.split('\n') {
+            lines += 1;
+            width = width.max(self.line_width(line));
+        }
+        (width, lines as f32 * self.line_height)
+    }
+
     /// Rasterize any glyphs of `text` that are not in the atlas yet.
     /// Must be called before generating vertices for the frame: growing the
     /// atlas changes its size and would invalidate already-computed UVs.
@@ -109,14 +161,7 @@ impl Font {
         layout: Option<&wgpu::BindGroupLayout>,
         textures: &mut ResourcePool<Texture>,
     ) {
-        // Fallback chain: the char itself -> white square (tofu) -> .notdef
-        let source = if self.font.lookup_glyph_index(ch) != 0 {
-            ch
-        } else if self.font.lookup_glyph_index('\u{25A1}') != 0 {
-            '\u{25A1}'
-        } else {
-            ch // index 0 rasterizes the font's .notdef glyph
-        };
+        let source = self.glyph_source(ch);
 
         let (metrics, bitmap) = self.font.rasterize(source, self.size);
         let (w, h) = (metrics.width as u32, metrics.height as u32);
@@ -411,6 +456,15 @@ pub fn font_load(path: &str, size: u32, smooth: bool) -> PyResult<FontId> {
 }
 
 #[pyfunction]
+pub fn text_size(font: FontId, text: &str) -> PyResult<(f32, f32)> {
+    with_engine(|engine| {
+        engine.fonts.get(font).map(|f| f.measure(text)).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid font ID: {}", font))
+        })
+    })?
+}
+
+#[pyfunction]
 pub fn font_free(font: FontId) -> PyResult<()> {
     with_engine(|engine| {
         // Get font and remove its atlas texture
@@ -458,5 +512,69 @@ mod tests {
         // Doesn't fit the row remainder and no second row fits either
         assert!(packer.alloc(10, 10).is_none());
         assert!(packer.alloc(100, 4).is_none()); // wider than the atlas
+    }
+
+    /// A Font with no atlas/GPU behind it: measuring goes through fontdue
+    /// metrics only, like text_size() on glyphs not yet rasterized
+    fn test_font() -> Font {
+        let data = std::fs::read("examples/assets/font.ttf").expect("test font");
+        let fontdue_font =
+            fontdue::Font::from_bytes(data, fontdue::FontSettings::default()).unwrap();
+        let size = 16.0;
+        let (ascent, line_height) = fontdue_font
+            .horizontal_line_metrics(size)
+            .map(|m| (m.ascent, m.new_line_size))
+            .unwrap_or((size, size * 1.2));
+        Font {
+            atlas_texture_id: 0,
+            glyphs: HashMap::new(),
+            smooth: true,
+            line_height,
+            font: fontdue_font,
+            size,
+            ascent,
+            packer: AtlasPacker::new(64, 64),
+            atlas_data: vec![0; 64 * 64 * 4],
+        }
+    }
+
+    #[test]
+    fn measure_single_line() {
+        let font = test_font();
+        let (w1, h) = font.measure("a");
+        let (w2, _) = font.measure("aa");
+        assert!(w1 > 0.0);
+        assert!(w2 > w1 * 1.5 && w2 < w1 * 2.5); // ~ two advances (+kerning)
+        assert_eq!(h, font.line_height);
+    }
+
+    #[test]
+    fn measure_multiline_takes_widest_line() {
+        let font = test_font();
+        let (w_wide, _) = font.measure("the widest line");
+        let (w, h) = font.measure("the widest line\nx");
+        assert_eq!(w, w_wide);
+        assert_eq!(h, 2.0 * font.line_height);
+    }
+
+    #[test]
+    fn measure_skips_control_chars() {
+        let font = test_font();
+        assert_eq!(font.measure("a\rb\t").0, font.measure("ab").0);
+    }
+
+    #[test]
+    fn measure_prefers_cached_glyph_advance() {
+        // After "rasterization" the cached advance must win over metrics
+        let mut font = test_font();
+        font.glyphs.insert(
+            'a',
+            GlyphInfo {
+                rect: (0, 0, 0, 0),
+                offset: (0.0, 0.0),
+                advance: 100.0,
+            },
+        );
+        assert_eq!(font.measure("a").0, 100.0);
     }
 }

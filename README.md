@@ -241,13 +241,14 @@ skipped entirely.
 | `set_view(x, y, zoom=1, rot=0)` | Camera: place world point `(x, y)` at the screen center for subsequent draws, zoomed and rotated around it |
 | `reset_view()` | Back to screen space — for HUD/UI |
 
-### Text (3)
+### Text (4)
 
 | Function | Description |
 |----------|-------------|
 | `font_load(path, size, smooth=True)` | Load TTF font. `smooth=False` gives pixel-perfect rendering |
 | `font_free(font)` | Free font |
-| `text(font, string, x, y, color, z=0)` | Draw text. Any Unicode the font provides (glyphs are rasterized on demand), `\n` starts a new line, missing glyphs render as □ |
+| `text(font, string, x, y, color, z=0, align="left")` | Draw text. Any Unicode the font provides (glyphs are rasterized on demand), `\n` starts a new line, missing glyphs render as □. `align` ("left"/"center"/"right") sets what `x` anchors — each line aligns separately |
+| `text_size(font, string)` | Measure without drawing: `(width, height)` of the block — widest line and line count × line height, matching `text()` exactly |
 
 ### Audio (12)
 

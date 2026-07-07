@@ -59,7 +59,21 @@ def test_circle_fill(clean_commands):
 
 def test_text(clean_commands):
     pgfx.text(3, "hi", 10, 20, pgfx.WHITE, z=1)
-    assert commands() == [(_batch.CMD_TEXT, 3, "hi", 10, 20, 255, 255, 255, 255, 1)]
+    assert commands() == [(_batch.CMD_TEXT, 3, "hi", 10, 20, 255, 255, 255, 255, 1, 0)]
+
+
+def test_text_align(clean_commands):
+    pgfx.text(3, "hi", 10, 20, pgfx.WHITE, align="center")
+    pgfx.text(3, "hi", 10, 20, pgfx.WHITE, align="right")
+    assert [cmd[-1] for cmd in commands()] == [1, 2]
+
+
+def test_text_rejects_unknown_align(clean_commands):
+    import pytest
+
+    with pytest.raises(ValueError, match="align"):
+        pgfx.text(3, "hi", 10, 20, pgfx.WHITE, align="middle")
+    assert commands() == []
 
 
 def test_particles_render(clean_commands):

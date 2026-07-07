@@ -34,6 +34,7 @@ ENGINE_FUNCTIONS = [
     (pgfx.sprite_free, (1,)),
     (pgfx.font_load, ("nonexistent.ttf", 16)),
     (pgfx.font_free, (1,)),
+    (pgfx.text_size, (1, "x")),
     (pgfx.sprite_rect, (1, 0.0, 0.0)),
     (pgfx.collide_sprites, (1, 0.0, 0.0, 2, 0.0, 0.0)),
     (pgfx.point_in_sprite, (0.0, 0.0, 1, 0.0, 0.0)),
