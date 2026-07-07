@@ -150,8 +150,38 @@ struct SpriteDrawCommand {
     flip_x: bool,
     flip_y: bool,
     z: i32,                            // Z-order for layer sorting (higher = on top)
+    seq: u32,                          // Position in the frame's command list (call order)
     color_override: Option<[f32; 4]>,  // Override sprite color (for particles/primitives)
     size_override: Option<(f32, f32)>, // Override size (w, h) for primitives
+}
+
+/// Text draw command (parsed from Python)
+#[derive(Debug, Clone)]
+struct TextDrawCommand {
+    font_id: u32,
+    text: String,
+    x: f32,
+    y: f32,
+    color: [u8; 4],
+    z: i32,
+    seq: u32,
+}
+
+/// A single draw command in the unified stream. Everything is sorted by
+/// (z, seq) together, so same-z commands keep the user's call order across
+/// sprites, primitives, lights, particles and text.
+enum DrawItem {
+    Sprite(SpriteDrawCommand),
+    Text(TextDrawCommand),
+}
+
+impl DrawItem {
+    fn order_key(&self) -> (i32, u32) {
+        match self {
+            DrawItem::Sprite(cmd) => (cmd.z, cmd.seq),
+            DrawItem::Text(cmd) => (cmd.z, cmd.seq),
+        }
+    }
 }
 
 /// Generate vertices for a sprite with transformations.
@@ -264,6 +294,90 @@ fn generate_sprite_vertices(
             color,
         },
     ]
+}
+
+/// Append glyph quads for a text command to the vertex list
+fn generate_text_vertices(
+    font: &crate::text::Font,
+    cmd: &TextDrawCommand,
+    out: &mut Vec<SpriteVertex>,
+) {
+    // Straight-alpha vertex color; the shader premultiplies once
+    let alpha = cmd.color[3] as f32 / 255.0;
+    let color = [
+        cmd.color[0] as f32 / 255.0,
+        cmd.color[1] as f32 / 255.0,
+        cmd.color[2] as f32 / 255.0,
+        alpha,
+    ];
+
+    // For pixel-perfect fonts, round base coordinates
+    let (base_x, base_y) = if font.smooth {
+        (cmd.x, cmd.y)
+    } else {
+        (cmd.x.floor(), cmd.y.floor())
+    };
+    let mut cursor_x = base_x;
+    let cursor_y = base_y;
+
+    for ch in cmd.text.chars() {
+        if let Some(glyph_info) = font.glyphs.get(&ch) {
+            // For pixel-perfect fonts, round glyph positions
+            let (glyph_x, glyph_y) = if font.smooth {
+                (
+                    cursor_x + glyph_info.offset.0,
+                    cursor_y + glyph_info.offset.1,
+                )
+            } else {
+                (
+                    (cursor_x + glyph_info.offset.0).floor(),
+                    (cursor_y + glyph_info.offset.1).floor(),
+                )
+            };
+
+            let (u0, v0, u1, v1) = glyph_info.uv;
+            let (glyph_w, glyph_h) = glyph_info.size;
+
+            // Two triangles per glyph quad
+            let x0 = glyph_x;
+            let y0 = glyph_y;
+            let x1 = glyph_x + glyph_w;
+            let y1 = glyph_y + glyph_h;
+
+            out.push(SpriteVertex {
+                position: [x0, y0],
+                tex_coords: [u0, v0],
+                color,
+            });
+            out.push(SpriteVertex {
+                position: [x1, y0],
+                tex_coords: [u1, v0],
+                color,
+            });
+            out.push(SpriteVertex {
+                position: [x0, y1],
+                tex_coords: [u0, v1],
+                color,
+            });
+            out.push(SpriteVertex {
+                position: [x1, y0],
+                tex_coords: [u1, v0],
+                color,
+            });
+            out.push(SpriteVertex {
+                position: [x1, y1],
+                tex_coords: [u1, v1],
+                color,
+            });
+            out.push(SpriteVertex {
+                position: [x0, y1],
+                tex_coords: [u0, v1],
+                color,
+            });
+
+            cursor_x += glyph_info.advance;
+        }
+    }
 }
 
 /// Create sprite rendering pipeline
@@ -420,22 +534,23 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             PyResult::Ok((wp, c, cs))
         })??;
 
-    // Parse commands - all go into one list preserving order
+    // Parse commands into one unified stream; each item carries its position
+    // in the command list (seq) so same-z draws keep the user's call order.
     let mut clear_color = wgpu::Color {
         r: 0.0,
         g: 0.0,
         b: 0.0,
         a: 1.0,
     };
-    let mut sprite_commands: Vec<SpriteDrawCommand> = Vec::new();
-    let mut text_draws: Vec<(u32, String, f32, f32, u8, u8, u8, u8, i32)> = Vec::new();
-    // light: (light_id, x, y, z)
-    let mut light_draws: Vec<(u32, f32, f32, i32)> = Vec::new();
-    // particles: (ps_id, z)
-    let mut particle_draws: Vec<(u32, i32)> = Vec::new();
+    let mut items: Vec<DrawItem> = Vec::with_capacity(commands.len());
+    // light: (light_id, x, y, z, seq) — expanded to sprites once engine data is available
+    let mut light_draws: Vec<(u32, f32, f32, i32, u32)> = Vec::new();
+    // particles: (ps_id, z, seq)
+    let mut particle_draws: Vec<(u32, i32, u32)> = Vec::new();
 
     Python::attach(|py| {
-        for cmd_obj in commands.iter() {
+        for (seq, cmd_obj) in commands.iter().enumerate() {
+            let seq = seq as u32;
             let cmd = cmd_obj.bind(py);
 
             // Commands are tuples: (cmd_type, ...)
@@ -473,7 +588,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let a = tuple.get_item(8)?.extract::<u8>()? as f32 / 255.0;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
 
-                                sprite_commands.push(SpriteDrawCommand {
+                                items.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id: white_pixel_sprite,
                                     x,
                                     y,
@@ -483,13 +598,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     flip_x: false,
                                     flip_y: false,
                                     z,
+                                    seq,
                                     color_override: Some([r, g, b, a]),
                                     size_override: Some((w, h)),
-                                });
+                                }));
                             }
 
                             CMD_LINE => {
-                                // (CMD_LINE, x1, y1, x2, y2, r, g, b, a, z)
+                                // (CMD_LINE, x1, y1, x2, y2, r, g, b, a, z, width)
                                 let x1 = tuple.get_item(1)?.extract::<f32>()?;
                                 let y1 = tuple.get_item(2)?.extract::<f32>()?;
                                 let x2 = tuple.get_item(3)?.extract::<f32>()?;
@@ -499,26 +615,30 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let b = tuple.get_item(7)?.extract::<u8>()? as f32 / 255.0;
                                 let a = tuple.get_item(8)?.extract::<u8>()? as f32 / 255.0;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
+                                let width = tuple.get_item(10)?.extract::<f32>()?;
 
                                 let dx = x2 - x1;
                                 let dy = y2 - y1;
                                 let len = (dx * dx + dy * dy).sqrt();
-                                if len > 0.0 {
+                                if len > 0.0 && width > 0.0 {
                                     let rot = dy.atan2(dx);
-                                    let thickness = 2.0;
-                                    sprite_commands.push(SpriteDrawCommand {
+                                    // Center the quad on the line: offset by half
+                                    // the width perpendicular to the direction
+                                    let (sin, cos) = rot.sin_cos();
+                                    items.push(DrawItem::Sprite(SpriteDrawCommand {
                                         sprite_id: white_pixel_sprite,
-                                        x: x1,
-                                        y: y1 - thickness / 2.0,
+                                        x: x1 + sin * width / 2.0,
+                                        y: y1 - cos * width / 2.0,
                                         rot,
                                         scale: 1.0,
                                         alpha: 1.0,
                                         flip_x: false,
                                         flip_y: false,
                                         z,
+                                        seq,
                                         color_override: Some([r, g, b, a]),
-                                        size_override: Some((len, thickness)),
-                                    });
+                                        size_override: Some((len, width)),
+                                    }));
                                 }
                             }
 
@@ -535,7 +655,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
                                 // Circle texture is 1024x1024, scale to diameter
                                 let diameter = radius * 2.0;
-                                sprite_commands.push(SpriteDrawCommand {
+                                items.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id: circle_sprite,
                                     x: cx,
                                     y: cy,
@@ -545,9 +665,10 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     flip_x: false,
                                     flip_y: false,
                                     z,
+                                    seq,
                                     color_override: Some([r, g, b, a]),
                                     size_override: None,
-                                });
+                                }));
                             }
 
                             CMD_DRAW => {
@@ -557,7 +678,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
                                 let z = tuple.get_item(4)?.extract::<i32>()?;
 
-                                sprite_commands.push(SpriteDrawCommand {
+                                items.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id,
                                     x,
                                     y,
@@ -567,9 +688,10 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     flip_x: false,
                                     flip_y: false,
                                     z,
+                                    seq,
                                     color_override: None,
                                     size_override: None,
-                                });
+                                }));
                             }
 
                             CMD_DRAW_EX => {
@@ -584,7 +706,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let flip_y = tuple.get_item(8)?.extract::<bool>()?;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
 
-                                sprite_commands.push(SpriteDrawCommand {
+                                items.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id,
                                     x,
                                     y,
@@ -594,9 +716,10 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     flip_x,
                                     flip_y,
                                     z,
+                                    seq,
                                     color_override: None,
                                     size_override: None,
-                                });
+                                }));
                             }
 
                             CMD_TEXT => {
@@ -611,7 +734,15 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let a = tuple.get_item(8)?.extract::<u8>()?;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
 
-                                text_draws.push((font_id, text, x, y, r, g, b, a, z));
+                                items.push(DrawItem::Text(TextDrawCommand {
+                                    font_id,
+                                    text,
+                                    x,
+                                    y,
+                                    color: [r, g, b, a],
+                                    z,
+                                    seq,
+                                }));
                             }
 
                             CMD_LIGHT_DRAW => {
@@ -621,7 +752,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
                                 let z = tuple.get_item(4)?.extract::<i32>()?;
 
-                                light_draws.push((light_id, x, y, z));
+                                light_draws.push((light_id, x, y, z, seq));
                             }
 
                             CMD_PARTICLES_RENDER => {
@@ -629,7 +760,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let ps_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let z = tuple.get_item(2)?.extract::<i32>()?;
 
-                                particle_draws.push((ps_id, z));
+                                particle_draws.push((ps_id, z, seq));
                             }
 
                             _ => {}
@@ -642,13 +773,13 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
     })?;
 
     let t_parse = t_start.elapsed();
-    let sprite_commands_count = sprite_commands.len();
 
     // Perform rendering with engine's GPU resources
     crate::engine::with_engine(|engine| {
-        // Convert light_draws to sprite commands (need engine.lights access)
+        // Expand light draws into sprite commands (need engine.lights access);
+        // they keep the seq of their original command for correct ordering
         let time = engine.start_time.elapsed().as_secs_f32();
-        for (light_id, x, y, z) in light_draws {
+        for (light_id, x, y, z, seq) in light_draws {
             if let Some(light) = engine.lights.get(light_id) {
                 // Calculate effective intensity with flicker
                 let mut intensity = light.intensity;
@@ -667,7 +798,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     intensity,
                 ];
 
-                sprite_commands.push(SpriteDrawCommand {
+                items.push(DrawItem::Sprite(SpriteDrawCommand {
                     sprite_id: circle_soft_sprite,
                     x,
                     y,
@@ -677,14 +808,16 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     flip_x: false,
                     flip_y: false,
                     z,
+                    seq,
                     color_override: Some(color),
                     size_override: None,
-                });
+                }));
             }
         }
 
-        // Convert particle_draws to sprite commands
-        for (ps_id, z) in particle_draws {
+        // Expand particle draws into sprite commands (all particles of a
+        // system share its z and seq; they stay in generation order)
+        for (ps_id, z, seq) in particle_draws {
             if let Some(system) = engine.particle_systems.get(ps_id) {
                 if let Some(sprite_id) = system.config.sprite_id {
                     // Render as sprites (textured particles) with particle color
@@ -694,7 +827,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                         .map(|s| s.region.2 as f32)
                         .unwrap_or(32.0);
                     for draw_cmd in system.generate_draw_commands(base_size) {
-                        sprite_commands.push(SpriteDrawCommand {
+                        items.push(DrawItem::Sprite(SpriteDrawCommand {
                             sprite_id: draw_cmd.1,
                             x: draw_cmd.2,
                             y: draw_cmd.3,
@@ -704,6 +837,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             flip_x: draw_cmd.6,
                             flip_y: draw_cmd.7,
                             z,
+                            seq,
                             color_override: Some([
                                 draw_cmd.8,
                                 draw_cmd.9,
@@ -711,7 +845,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 draw_cmd.11,
                             ]),
                             size_override: None,
-                        });
+                        }));
                     }
                 } else {
                     // Render primitive particles as white pixel sprites
@@ -722,7 +856,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             vert_cmd.7 as f32 / 255.0,
                             vert_cmd.8 as f32 / 255.0,
                         ];
-                        sprite_commands.push(SpriteDrawCommand {
+                        items.push(DrawItem::Sprite(SpriteDrawCommand {
                             sprite_id: white_pixel_sprite,
                             x: vert_cmd.1,
                             y: vert_cmd.2,
@@ -732,13 +866,16 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             flip_x: false,
                             flip_y: false,
                             z,
+                            seq,
                             color_override: Some(color),
                             size_override: Some((vert_cmd.3, vert_cmd.4)),
-                        });
+                        }));
                     }
                 }
             }
         }
+
+        let items_count = items.len();
 
         // Now get GPU resources (immutable borrows)
         let surface = engine
@@ -794,7 +931,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             });
 
             // Render sprites, primitives and text (all through sprite pipeline)
-            if !sprite_commands.is_empty() || !text_draws.is_empty() {
+            if !items.is_empty() {
                 // Get sprite pipeline
                 let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
@@ -835,174 +972,92 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
                 let t_sprite_start = Instant::now();
 
-                // Group sprites by texture for batching, track offsets
-                let mut all_vertices: Vec<SpriteVertex> =
-                    Vec::with_capacity((sprite_commands.len() + text_draws.len() * 20) * 6);
+                // Group consecutive same-texture draws into batches
+                let mut all_vertices: Vec<SpriteVertex> = Vec::with_capacity(items.len() * 6);
                 let mut batches: Vec<(u32, u32, u32)> = Vec::new(); // (texture_id, start, count)
 
-                // Sort by z only, stable sort preserves insertion order within same z
-                // Batching works for consecutive commands with same texture
-                let mut sorted_commands = sprite_commands;
-                sorted_commands.sort_by_key(|cmd| cmd.z);
+                // One unified sort: back-to-front by z, call order within a z.
+                // Batching works for consecutive items with the same texture.
+                items.sort_by_key(|item| item.order_key());
 
                 let mut current_texture_id: Option<u32> = None;
                 let mut batch_start = 0u32;
 
-                for cmd in &sorted_commands {
-                    // Get sprite
-                    let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Invalid sprite ID: {}",
-                            cmd.sprite_id
-                        ))
-                    })?;
-
-                    // Get texture
-                    let texture_size = engine
-                        .textures
-                        .get(sprite.texture_id)
-                        .map(|t| t.size)
-                        .ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "Invalid texture ID: {}",
-                                sprite.texture_id
-                            ))
-                        })?;
-
-                    // Check if texture changed
-                    if current_texture_id != Some(sprite.texture_id) {
-                        // Save previous batch if any
-                        if let Some(tex_id) = current_texture_id {
-                            let count = all_vertices.len() as u32 - batch_start;
+                // Close the current batch and start one for the given texture
+                fn switch_batch(
+                    batches: &mut Vec<(u32, u32, u32)>,
+                    current_texture_id: &mut Option<u32>,
+                    batch_start: &mut u32,
+                    vertices_len: u32,
+                    texture_id: u32,
+                ) {
+                    if *current_texture_id != Some(texture_id) {
+                        if let Some(tex_id) = *current_texture_id {
+                            let count = vertices_len - *batch_start;
                             if count > 0 {
-                                batches.push((tex_id, batch_start, count));
+                                batches.push((tex_id, *batch_start, count));
                             }
                         }
-                        current_texture_id = Some(sprite.texture_id);
-                        batch_start = all_vertices.len() as u32;
-                    }
-
-                    // Generate vertices
-                    let verts = generate_sprite_vertices(sprite, texture_size, cmd);
-                    all_vertices.extend_from_slice(&verts);
-                }
-
-                // Save last sprite batch
-                if let Some(tex_id) = current_texture_id {
-                    let count = all_vertices.len() as u32 - batch_start;
-                    if count > 0 {
-                        batches.push((tex_id, batch_start, count));
+                        *current_texture_id = Some(texture_id);
+                        *batch_start = vertices_len;
                     }
                 }
 
-                // Generate text vertices directly (no temporary sprites!)
-                // TODO: text should also participate in z-sorting
-                for (font_id, text, x, y, r, g, b, a, _z) in &text_draws {
-                    let font = match engine.fonts.get(*font_id) {
-                        Some(f) => f,
-                        None => continue,
-                    };
+                for item in &items {
+                    match item {
+                        DrawItem::Sprite(cmd) => {
+                            let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
+                                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                    "Invalid sprite ID: {}",
+                                    cmd.sprite_id
+                                ))
+                            })?;
 
-                    let atlas_texture = match engine.textures.get(font.atlas_texture_id) {
-                        Some(t) => t,
-                        None => continue,
-                    };
-                    let (_atlas_w, _atlas_h) = atlas_texture.size;
+                            let texture_size = engine
+                                .textures
+                                .get(sprite.texture_id)
+                                .map(|t| t.size)
+                                .ok_or_else(|| {
+                                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                        "Invalid texture ID: {}",
+                                        sprite.texture_id
+                                    ))
+                                })?;
 
-                    // Save batch for font atlas texture
-                    if current_texture_id != Some(font.atlas_texture_id) {
-                        if let Some(tex_id) = current_texture_id {
-                            let count = all_vertices.len() as u32 - batch_start;
-                            if count > 0 {
-                                batches.push((tex_id, batch_start, count));
-                            }
+                            switch_batch(
+                                &mut batches,
+                                &mut current_texture_id,
+                                &mut batch_start,
+                                all_vertices.len() as u32,
+                                sprite.texture_id,
+                            );
+
+                            let verts = generate_sprite_vertices(sprite, texture_size, cmd);
+                            all_vertices.extend_from_slice(&verts);
                         }
-                        current_texture_id = Some(font.atlas_texture_id);
-                        batch_start = all_vertices.len() as u32;
-                    }
-
-                    // Straight-alpha vertex color; the shader premultiplies once
-                    let alpha = *a as f32 / 255.0;
-                    let color = [
-                        *r as f32 / 255.0,
-                        *g as f32 / 255.0,
-                        *b as f32 / 255.0,
-                        alpha,
-                    ];
-
-                    // For pixel-perfect fonts, round base coordinates
-                    let (base_x, base_y) = if font.smooth {
-                        (*x, *y)
-                    } else {
-                        (x.floor(), y.floor())
-                    };
-                    let mut cursor_x = base_x;
-                    let cursor_y = base_y;
-
-                    for ch in text.chars() {
-                        if let Some(glyph_info) = font.glyphs.get(&ch) {
-                            // For pixel-perfect fonts, round glyph positions
-                            let (glyph_x, glyph_y) = if font.smooth {
-                                (
-                                    cursor_x + glyph_info.offset.0,
-                                    cursor_y + glyph_info.offset.1,
-                                )
-                            } else {
-                                (
-                                    (cursor_x + glyph_info.offset.0).floor(),
-                                    (cursor_y + glyph_info.offset.1).floor(),
-                                )
+                        DrawItem::Text(cmd) => {
+                            let font = match engine.fonts.get(cmd.font_id) {
+                                Some(f) => f,
+                                None => continue,
                             };
+                            if engine.textures.get(font.atlas_texture_id).is_none() {
+                                continue;
+                            }
 
-                            let (u0, v0, u1, v1) = glyph_info.uv;
-                            let (glyph_w, glyph_h) = glyph_info.size;
+                            switch_batch(
+                                &mut batches,
+                                &mut current_texture_id,
+                                &mut batch_start,
+                                all_vertices.len() as u32,
+                                font.atlas_texture_id,
+                            );
 
-                            // Generate 6 vertices for glyph quad (2 triangles)
-                            let x0 = glyph_x;
-                            let y0 = glyph_y;
-                            let x1 = glyph_x + glyph_w;
-                            let y1 = glyph_y + glyph_h;
-
-                            // Triangle 1: top-left, top-right, bottom-left
-                            all_vertices.push(SpriteVertex {
-                                position: [x0, y0],
-                                tex_coords: [u0, v0],
-                                color,
-                            });
-                            all_vertices.push(SpriteVertex {
-                                position: [x1, y0],
-                                tex_coords: [u1, v0],
-                                color,
-                            });
-                            all_vertices.push(SpriteVertex {
-                                position: [x0, y1],
-                                tex_coords: [u0, v1],
-                                color,
-                            });
-
-                            // Triangle 2: top-right, bottom-right, bottom-left
-                            all_vertices.push(SpriteVertex {
-                                position: [x1, y0],
-                                tex_coords: [u1, v0],
-                                color,
-                            });
-                            all_vertices.push(SpriteVertex {
-                                position: [x1, y1],
-                                tex_coords: [u1, v1],
-                                color,
-                            });
-                            all_vertices.push(SpriteVertex {
-                                position: [x0, y1],
-                                tex_coords: [u0, v1],
-                                color,
-                            });
-
-                            cursor_x += glyph_info.advance;
+                            generate_text_vertices(font, cmd, &mut all_vertices);
                         }
                     }
                 }
 
-                // Save last text batch
+                // Save the last batch
                 if let Some(tex_id) = current_texture_id {
                     let count = all_vertices.len() as u32 - batch_start;
                     if count > 0 {
@@ -1037,16 +1092,16 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
                     let t_buffer_write = t_sprite_start.elapsed();
 
-                    if DEBUG_TIMING && sprite_commands_count > 100 {
+                    if DEBUG_TIMING && items_count > 100 {
                         static FRAME_COUNT: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
                         let frame = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if frame.is_multiple_of(60) {
-                            println!("TIMING: parse={:.2}ms, vertex_gen={:.2}ms, buf_write={:.2}ms, sprites={}",
+                            println!("TIMING: parse={:.2}ms, vertex_gen={:.2}ms, buf_write={:.2}ms, items={}",
                                 t_parse.as_secs_f64() * 1000.0,
                                 t_vertex_gen.as_secs_f64() * 1000.0,
                                 (t_buffer_write - t_vertex_gen).as_secs_f64() * 1000.0,
-                                sprite_commands_count);
+                                items_count);
                         }
                     }
 
@@ -1170,9 +1225,49 @@ mod tests {
             flip_x: false,
             flip_y: false,
             z: 0,
+            seq: 0,
             color_override: None,
             size_override: None,
         }
+    }
+
+    fn sprite_item(z: i32, seq: u32) -> DrawItem {
+        let mut cmd = test_cmd();
+        cmd.z = z;
+        cmd.seq = seq;
+        DrawItem::Sprite(cmd)
+    }
+
+    fn text_item(z: i32, seq: u32) -> DrawItem {
+        DrawItem::Text(TextDrawCommand {
+            font_id: 1,
+            text: "x".to_string(),
+            x: 0.0,
+            y: 0.0,
+            color: [255, 255, 255, 255],
+            z,
+            seq,
+        })
+    }
+
+    #[test]
+    fn draw_items_sort_by_z_then_call_order_across_kinds() {
+        // Regression for two ordering bugs: text ignored z entirely, and
+        // same-z order was "sprites, then lights/particles, then text"
+        // instead of call order.
+        let mut items = [
+            text_item(1, 0),   // HUD text at z=1, called first
+            sprite_item(0, 1), // background sprite
+            sprite_item(2, 2), // overlay sprite above the text
+            sprite_item(0, 3), // same z as background, called later
+            text_item(0, 4),   // same z, called last
+        ];
+        items.sort_by_key(|item| item.order_key());
+
+        let keys: Vec<(i32, u32)> = items.iter().map(|i| i.order_key()).collect();
+        assert_eq!(keys, vec![(0, 1), (0, 3), (0, 4), (1, 0), (2, 2)]);
+        // The z=2 sprite must come after the z=1 text
+        assert!(matches!(items.last().unwrap(), DrawItem::Sprite(_)));
     }
 
     #[test]

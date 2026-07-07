@@ -45,9 +45,9 @@ def rect_fill(x, y, w, h, color, z=0):
     _commands.append((CMD_RECT_FILL, x, y, w, h, color.r, color.g, color.b, color.a, z))
 
 
-def line(x1, y1, x2, y2, color, z=0):
-    """Draw a line."""
-    _commands.append((CMD_LINE, x1, y1, x2, y2, color.r, color.g, color.b, color.a, z))
+def line(x1, y1, x2, y2, color, z=0, width=2):
+    """Draw a line of the given width (centered on the segment)."""
+    _commands.append((CMD_LINE, x1, y1, x2, y2, color.r, color.g, color.b, color.a, z, width))
 
 
 def circle_fill(x, y, r, color, z=0):

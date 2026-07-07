@@ -144,9 +144,8 @@ pgfx.light_draw(torch, player_x, player_y)
 ## Notes
 
 **Draw order.** Everything is drawn back-to-front by `z` (default 0, higher =
-on top). Within the same `z`, sprites keep their call order; lights and
-particles are drawn after sprites of the same `z`, and text is currently
-always rendered on top of everything.
+on top). Within the same `z`, all commands — sprites, primitives, text,
+lights and particles — keep their call order.
 
 **`clear(color)`** sets the frame's background color (the last call wins) —
 it does not erase what was already drawn this frame.
@@ -218,7 +217,7 @@ get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 | `draw(spr, x, y)` | Draw sprite |
 | `draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False)` | Draw with transform |
 | `rect_fill(x, y, w, h, color)` | Draw rectangle |
-| `line(x1, y1, x2, y2, color)` | Draw line |
+| `line(x1, y1, x2, y2, color, width=2)` | Draw line (centered on the segment) |
 | `circle_fill(x, y, r, color)` | Draw circle |
 
 ### Text (3)
@@ -227,7 +226,7 @@ get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 |----------|-------------|
 | `font_load(path, size, smooth=True)` | Load TTF font. `smooth=False` gives pixel-perfect rendering |
 | `font_free(font)` | Free font |
-| `text(font, string, x, y, color)` | Draw text (ASCII only for now; always on top of sprites) |
+| `text(font, string, x, y, color, z=0)` | Draw text (ASCII only for now) |
 
 ### Audio (12)
 
