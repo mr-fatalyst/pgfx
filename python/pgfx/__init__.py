@@ -49,9 +49,8 @@ from pgfx._native import (
     particles_emit,
     particles_fire,
     particles_free,
-    particles_is_alive,
     # Particles
-    particles_load,
+    particles_is_alive,
     particles_move_to,
     particles_stop,
     particles_update,
@@ -162,6 +161,33 @@ def _convert_color(kwargs):
 def particles_create(sprite=None, primitive=None, **kwargs):
     """Create a particle system."""
     return _native.particles_create(sprite, primitive, **_convert_color(kwargs))
+
+
+def particles_load(path):
+    """Load a particle system from a JSON file (as saved by the particle editor).
+
+    The file is an object with the same parameters particles_create() accepts,
+    plus an optional "primitive" name or "sprite" — an image path resolved
+    relative to the JSON file.
+    """
+    import json
+    import os
+
+    with open(path) as f:
+        params = json.load(f)
+    if not isinstance(params, dict):
+        raise ValueError(f"{path}: expected a JSON object with particle parameters")
+
+    primitive = params.pop("primitive", None)
+    sprite = params.pop("sprite", None)
+    if sprite is not None:
+        sprite = sprite_load(os.path.join(os.path.dirname(os.path.abspath(path)), sprite))
+    for key in ("start_color", "end_color", "color"):
+        if key in params:
+            params[key] = tuple(int(c) for c in params[key])
+    if isinstance(params.get("gravity"), list):
+        params["gravity"] = tuple(params["gravity"])
+    return _native.particles_create(sprite, primitive, **params)
 
 
 def particles_set(ps, **kwargs):

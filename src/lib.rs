@@ -83,7 +83,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(audio::set_music_volume, m)?)?;
 
     // Particles
-    m.add_function(wrap_pyfunction!(particles::particles_load, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_create, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_free, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_set, m)?)?;

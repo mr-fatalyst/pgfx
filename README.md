@@ -270,13 +270,14 @@ skipped entirely.
 | `collide_sprites(spr1, x1, y1, spr2, x2, y2)` | Sprite overlap |
 | `point_in_sprite(px, py, spr, sx, sy)` | Point in sprite |
 
-### Particles (11)
+### Particles (12)
 
 | Function | Description |
 |----------|-------------|
 | `particles_create(**params)` | Create particle system |
+| `particles_load(path)` | Create particle system from a JSON file (as saved by `utils/particle_editor`): the same keys as `particles_create`, plus optional `primitive` or `sprite` — an image path resolved relative to the file |
 | `particles_free(ps)` | Free particle system |
-| `particles_set(ps, **params)` | Update parameters |
+| `particles_set(ps, **params)` | Update parameters; the ones not passed keep their current values |
 | `particles_fire(ps, x, y)` | Start emitting |
 | `particles_emit(ps, x, y, count)` | Emit burst |
 | `particles_stop(ps)` | Stop emitting |

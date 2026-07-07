@@ -273,11 +273,13 @@ impl ParticleSystem {
     }
 }
 
-/// Parse particle configuration from Python kwargs
+/// Parse particle configuration from Python kwargs on top of a base config:
+/// parameters not present in kwargs keep their values from `base`.
 fn parse_particle_config(
     kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    base: ParticleConfig,
 ) -> PyResult<ParticleConfig> {
-    let mut config = ParticleConfig::default();
+    let mut config = base;
 
     if let Some(dict) = kwargs {
         // Lifetime
@@ -397,16 +399,6 @@ fn parse_particle_config(
 // Python API functions
 
 #[pyfunction]
-pub fn particles_load(path: &str) -> PyResult<ParticleSystemId> {
-    // Load particle system from JSON file
-    // For now, we'll just return an error - JSON loading can be implemented later
-    let _ = path;
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "particles_load is not yet implemented. Use particles_create instead.",
-    ))
-}
-
-#[pyfunction]
 #[pyo3(signature = (sprite=None, primitive=None, **kwargs))]
 pub fn particles_create(
     sprite: Option<SpriteId>,
@@ -414,7 +406,7 @@ pub fn particles_create(
     kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<ParticleSystemId> {
     // Parse configuration
-    let config = parse_particle_config(kwargs)?;
+    let config = parse_particle_config(kwargs, ParticleConfig::default())?;
 
     // Get max_particles from kwargs or use default
     let max_particles = if let Some(dict) = kwargs {
@@ -492,17 +484,28 @@ pub fn particles_set(
     ps: ParticleSystemId,
     kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
-    let config = parse_particle_config(kwargs)?;
+    // Merge on top of the system's current config: parameters not passed
+    // keep their values (sprite_id included).
+    let base = with_engine(|engine| {
+        engine
+            .particle_systems
+            .get(ps)
+            .map(|system| system.config.clone())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid particle system ID: {}",
+                    ps
+                ))
+            })
+    })??;
+
+    let config = parse_particle_config(kwargs, base)?;
 
     with_engine(|engine| {
         let system = engine.particle_systems.get_mut(ps).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid particle system ID: {}", ps))
         })?;
-
-        // Preserve sprite_id when updating config
-        let mut final_config = config;
-        final_config.sprite_id = system.config.sprite_id;
-        system.configure(final_config);
+        system.configure(config);
         Ok(())
     })?
 }

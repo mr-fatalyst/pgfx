@@ -155,6 +155,8 @@ class ParticleEditor:
 
     def get_params_dict(self):
         return {
+            "primitive": self.current_primitive,
+            "max_particles": 2000,
             "emission_rate": self.sliders["emission_rate"].value,
             "lifetime_min": self.sliders["lifetime_min"].value,
             "lifetime_max": self.sliders["lifetime_max"].value,
@@ -191,6 +193,12 @@ class ParticleEditor:
             self.color_pickers["start_color"].set_color(tuple(params["start_color"]))
         if "end_color" in params:
             self.color_pickers["end_color"].set_color(tuple(params["end_color"]))
+
+        if params.get("primitive") in self.primitive_types:
+            self.current_primitive = params["primitive"]
+            for i, btn in enumerate(self.primitive_buttons):
+                btn.active = self.primitive_types[i] == self.current_primitive
+            self.create_particle_system()
 
     def reset_to_defaults(self):
         defaults = {

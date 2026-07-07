@@ -77,6 +77,13 @@ def test_sprite_sheet_rejects_zero_dimensions():
         pgfx.sprite_sheet("nonexistent.png", 0, 1)
 
 
-def test_particles_load_not_implemented():
-    with pytest.raises(NotImplementedError):
-        pgfx.particles_load("particles.json")
+def test_particles_load_missing_file():
+    with pytest.raises(FileNotFoundError):
+        pgfx.particles_load("nonexistent_particles.json")
+
+
+def test_particles_load_rejects_non_object(tmp_path):
+    path = tmp_path / "particles.json"
+    path.write_text("[1, 2, 3]")
+    with pytest.raises(ValueError, match="JSON object"):
+        pgfx.particles_load(str(path))
