@@ -226,7 +226,7 @@ get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 |----------|-------------|
 | `font_load(path, size, smooth=True)` | Load TTF font. `smooth=False` gives pixel-perfect rendering |
 | `font_free(font)` | Free font |
-| `text(font, string, x, y, color, z=0)` | Draw text (ASCII only for now) |
+| `text(font, string, x, y, color, z=0)` | Draw text. Any Unicode the font provides (glyphs are rasterized on demand), `\n` starts a new line, missing glyphs render as □ |
 
 ### Audio (12)
 

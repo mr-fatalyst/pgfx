@@ -296,9 +296,12 @@ fn generate_sprite_vertices(
     ]
 }
 
-/// Append glyph quads for a text command to the vertex list
+/// Append glyph quads for a text command to the vertex list.
+/// Supports '\n' (new line via the font's line height) and kerning.
+/// `atlas_size` is the current atlas texture size for UV normalization.
 fn generate_text_vertices(
     font: &crate::text::Font,
+    atlas_size: (u32, u32),
     cmd: &TextDrawCommand,
     out: &mut Vec<SpriteVertex>,
 ) {
@@ -317,11 +320,38 @@ fn generate_text_vertices(
     } else {
         (cmd.x.floor(), cmd.y.floor())
     };
+    let (atlas_w, atlas_h) = (atlas_size.0 as f32, atlas_size.1 as f32);
+
     let mut cursor_x = base_x;
-    let cursor_y = base_y;
+    let mut cursor_y = base_y;
+    let mut prev_ch: Option<char> = None;
 
     for ch in cmd.text.chars() {
-        if let Some(glyph_info) = font.glyphs.get(&ch) {
+        if ch == '\n' {
+            cursor_x = base_x;
+            cursor_y += font.line_height;
+            prev_ch = None;
+            continue;
+        }
+        if ch == '\r' {
+            continue;
+        }
+
+        if let Some(prev) = prev_ch {
+            if let Some(kern) = font.kern(prev, ch) {
+                cursor_x += kern;
+            }
+        }
+        prev_ch = Some(ch);
+
+        let glyph_info = match font.glyphs.get(&ch) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let (rect_x, rect_y, rect_w, rect_h) = glyph_info.rect;
+        // Empty rect = whitespace or unrenderable glyph: advance only
+        if rect_w > 0 && rect_h > 0 {
             // For pixel-perfect fonts, round glyph positions
             let (glyph_x, glyph_y) = if font.smooth {
                 (
@@ -335,14 +365,16 @@ fn generate_text_vertices(
                 )
             };
 
-            let (u0, v0, u1, v1) = glyph_info.uv;
-            let (glyph_w, glyph_h) = glyph_info.size;
+            let u0 = rect_x as f32 / atlas_w;
+            let v0 = rect_y as f32 / atlas_h;
+            let u1 = (rect_x + rect_w) as f32 / atlas_w;
+            let v1 = (rect_y + rect_h) as f32 / atlas_h;
 
             // Two triangles per glyph quad
             let x0 = glyph_x;
             let y0 = glyph_y;
-            let x1 = glyph_x + glyph_w;
-            let y1 = glyph_y + glyph_h;
+            let x1 = glyph_x + rect_w as f32;
+            let y1 = glyph_y + rect_h as f32;
 
             out.push(SpriteVertex {
                 position: [x0, y0],
@@ -374,9 +406,9 @@ fn generate_text_vertices(
                 tex_coords: [u0, v1],
                 color,
             });
-
-            cursor_x += glyph_info.advance;
         }
+
+        cursor_x += glyph_info.advance;
     }
 }
 
@@ -877,6 +909,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
         let items_count = items.len();
 
+        // Rasterize any missing glyphs BEFORE vertex generation: growing the
+        // atlas changes its size and would invalidate UVs already computed
+        // against the old size earlier in the same frame.
+        if let (Some(device), Some(queue)) = (engine.device.as_ref(), engine.queue.as_ref()) {
+            for item in &items {
+                if let DrawItem::Text(cmd) = item {
+                    if let Some(font) = engine.fonts.get_mut(cmd.font_id) {
+                        font.ensure_glyphs(
+                            &cmd.text,
+                            device,
+                            queue,
+                            engine.sprite_texture_bind_group_layout.as_ref(),
+                            &mut engine.textures,
+                        );
+                    }
+                }
+            }
+        }
+
         // Now get GPU resources (immutable borrows)
         let surface = engine
             .surface
@@ -1040,9 +1091,10 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 Some(f) => f,
                                 None => continue,
                             };
-                            if engine.textures.get(font.atlas_texture_id).is_none() {
-                                continue;
-                            }
+                            let atlas_size = match engine.textures.get(font.atlas_texture_id) {
+                                Some(t) => t.size,
+                                None => continue,
+                            };
 
                             switch_batch(
                                 &mut batches,
@@ -1052,7 +1104,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 font.atlas_texture_id,
                             );
 
-                            generate_text_vertices(font, cmd, &mut all_vertices);
+                            generate_text_vertices(font, atlas_size, cmd, &mut all_vertices);
                         }
                     }
                 }
