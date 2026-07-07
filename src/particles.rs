@@ -1,7 +1,6 @@
 use crate::engine::with_engine;
 use crate::sprite::SpriteId;
 use pyo3::prelude::*;
-use pyo3::BoundObject;
 use std::f32::consts::PI;
 
 pub type ParticleSystemId = u32;
@@ -590,71 +589,68 @@ pub fn particles_count(ps: ParticleSystemId) -> PyResult<u32> {
     })?
 }
 
-/// Generate render commands for a particle system
-/// Returns a list of tuples that can be added to the render batch
-#[pyfunction]
-pub fn particles_render(py: Python<'_>, ps: ParticleSystemId) -> PyResult<Vec<Py<PyAny>>> {
-    with_engine(|engine| {
-        let system = engine.particle_systems.get(ps).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid particle system ID: {}", ps))
-        })?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let mut commands = Vec::new();
+    #[test]
+    fn emit_respects_max_particles() {
+        let mut system = ParticleSystem::new(10);
+        system.emit(0.0, 0.0, 25);
+        assert_eq!(system.count(), 10);
+    }
 
-        if let Some(sprite_id) = system.config.sprite_id {
-            // Render as sprites (textured particles)
-            // Get sprite size for correct scaling (particle.size is in pixels)
-            let base_size = engine
-                .sprites
-                .get(sprite_id)
-                .map(|s| s.region.2 as f32) // width of sprite region
-                .unwrap_or(32.0); // fallback to primitive size
+    #[test]
+    fn emission_accumulator_spawns_at_rate() {
+        let mut system = ParticleSystem::new(1000);
+        system.configure(ParticleConfig {
+            emission_rate: 100.0,
+            lifetime_min: 10.0,
+            lifetime_max: 10.0,
+            ..Default::default()
+        });
+        system.fire(0.0, 0.0);
 
-            // Note: this returns Python commands, but internally we use renderer directly
-            // Format: (cmd, sprite_id, x, y, rot, scale, flip_x, flip_y, r, g, b, a)
-            for draw_cmd in system.generate_draw_commands(base_size) {
-                let items: Vec<Py<PyAny>> = vec![
-                    draw_cmd.0.into_pyobject(py)?.unbind().into(), // CMD_DRAW_EX
-                    draw_cmd.1.into_pyobject(py)?.unbind().into(), // sprite_id
-                    draw_cmd.2.into_pyobject(py)?.unbind().into(), // x
-                    draw_cmd.3.into_pyobject(py)?.unbind().into(), // y
-                    draw_cmd.4.into_pyobject(py)?.unbind().into(), // rot
-                    draw_cmd.5.into_pyobject(py)?.unbind().into(), // scale
-                    pyo3::types::PyBool::new(py, draw_cmd.6)
-                        .into_bound()
-                        .unbind()
-                        .into(), // flip_x
-                    pyo3::types::PyBool::new(py, draw_cmd.7)
-                        .into_bound()
-                        .unbind()
-                        .into(), // flip_y
-                    draw_cmd.8.into_pyobject(py)?.unbind().into(), // r
-                    draw_cmd.9.into_pyobject(py)?.unbind().into(), // g
-                    draw_cmd.10.into_pyobject(py)?.unbind().into(), // b
-                    draw_cmd.11.into_pyobject(py)?.unbind().into(), // a
-                ];
-                let tuple = pyo3::types::PyTuple::new(py, items.as_slice())?;
-                commands.push(tuple.unbind().into());
-            }
-        } else {
-            // Render as colored quads (primitive particles)
-            for vert_cmd in system.generate_vertices() {
-                let items: Vec<Py<PyAny>> = vec![
-                    vert_cmd.0.into_pyobject(py)?.unbind().into(), // CMD_RECT_FILL
-                    vert_cmd.1.into_pyobject(py)?.unbind().into(), // x
-                    vert_cmd.2.into_pyobject(py)?.unbind().into(), // y
-                    vert_cmd.3.into_pyobject(py)?.unbind().into(), // w
-                    vert_cmd.4.into_pyobject(py)?.unbind().into(), // h
-                    vert_cmd.5.into_pyobject(py)?.unbind().into(), // r
-                    vert_cmd.6.into_pyobject(py)?.unbind().into(), // g
-                    vert_cmd.7.into_pyobject(py)?.unbind().into(), // b
-                    vert_cmd.8.into_pyobject(py)?.unbind().into(), // a
-                ];
-                let tuple = pyo3::types::PyTuple::new(py, items.as_slice())?;
-                commands.push(tuple.unbind().into());
-            }
+        // 0.5s at 100/s must spawn ~50 particles regardless of dt granularity
+        for _ in 0..50 {
+            system.update(0.01);
         }
+        assert_eq!(system.count(), 50);
+    }
 
-        Ok(commands)
-    })?
+    #[test]
+    fn particles_die_after_lifetime() {
+        let mut system = ParticleSystem::new(100);
+        system.configure(ParticleConfig {
+            lifetime_min: 0.1,
+            lifetime_max: 0.1,
+            ..Default::default()
+        });
+        system.emit(0.0, 0.0, 5);
+        assert_eq!(system.count(), 5);
+        assert!(system.is_alive());
+
+        system.update(0.2);
+        assert_eq!(system.count(), 0);
+        assert!(!system.is_alive());
+    }
+
+    #[test]
+    fn stop_halts_auto_emission() {
+        let mut system = ParticleSystem::new(1000);
+        system.configure(ParticleConfig {
+            emission_rate: 100.0,
+            lifetime_min: 10.0,
+            lifetime_max: 10.0,
+            ..Default::default()
+        });
+        system.fire(0.0, 0.0);
+        system.update(0.1);
+        let count = system.count();
+        assert!(count > 0);
+
+        system.stop();
+        system.update(0.1);
+        assert_eq!(system.count(), count);
+    }
 }

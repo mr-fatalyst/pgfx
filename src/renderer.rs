@@ -154,14 +154,15 @@ struct SpriteDrawCommand {
     size_override: Option<(f32, f32)>, // Override size (w, h) for primitives
 }
 
-/// Generate vertices for a sprite with transformations
+/// Generate vertices for a sprite with transformations.
+/// `texture_size` is the full texture size in pixels (for UV normalization).
 fn generate_sprite_vertices(
     sprite: &crate::sprite::Sprite,
-    texture: &crate::texture::Texture,
+    texture_size: (u32, u32),
     cmd: &SpriteDrawCommand,
 ) -> [SpriteVertex; 6] {
     let (region_x, region_y, region_w, region_h) = sprite.region;
-    let (tex_w, tex_h) = texture.size;
+    let (tex_w, tex_h) = texture_size;
     let (origin_x, origin_y) = sprite.origin;
 
     // Calculate sprite size (use size_override for primitives, or region * scale)
@@ -216,7 +217,9 @@ fn generate_sprite_vertices(
     let (u0, u1) = if cmd.flip_x { (u1, u0) } else { (u0, u1) };
     let (v0, v1) = if cmd.flip_y { (v1, v0) } else { (v0, v1) };
 
-    // Calculate color with alpha (use override if provided, e.g. for particles)
+    // Calculate color with alpha (use override if provided, e.g. for particles).
+    // Vertex colors are straight-alpha: premultiplication happens exactly once,
+    // in the fragment shader (shaders/sprite.wgsl).
     let base_color = cmd.color_override.unwrap_or([
         sprite.color[0] as f32 / 255.0,
         sprite.color[1] as f32 / 255.0,
@@ -224,13 +227,7 @@ fn generate_sprite_vertices(
         sprite.color[3] as f32 / 255.0,
     ]);
     let alpha = base_color[3] * cmd.alpha;
-    // Premultiply color with alpha for correct blending
-    let color = [
-        base_color[0] * alpha,
-        base_color[1] * alpha,
-        base_color[2] * alpha,
-        alpha,
-    ];
+    let color = [base_color[0], base_color[1], base_color[2], alpha];
 
     // Create 6 vertices (2 triangles)
     // Triangle 1: top-left, top-right, bottom-left
@@ -861,12 +858,16 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     })?;
 
                     // Get texture
-                    let texture = engine.textures.get(sprite.texture_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Invalid texture ID: {}",
-                            sprite.texture_id
-                        ))
-                    })?;
+                    let texture_size = engine
+                        .textures
+                        .get(sprite.texture_id)
+                        .map(|t| t.size)
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Invalid texture ID: {}",
+                                sprite.texture_id
+                            ))
+                        })?;
 
                     // Check if texture changed
                     if current_texture_id != Some(sprite.texture_id) {
@@ -882,7 +883,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     }
 
                     // Generate vertices
-                    let verts = generate_sprite_vertices(sprite, texture, cmd);
+                    let verts = generate_sprite_vertices(sprite, texture_size, cmd);
                     all_vertices.extend_from_slice(&verts);
                 }
 
@@ -920,12 +921,12 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                         batch_start = all_vertices.len() as u32;
                     }
 
+                    // Straight-alpha vertex color; the shader premultiplies once
                     let alpha = *a as f32 / 255.0;
-                    // Premultiply color with alpha for correct blending
                     let color = [
-                        *r as f32 / 255.0 * alpha,
-                        *g as f32 / 255.0 * alpha,
-                        *b as f32 / 255.0 * alpha,
+                        *r as f32 / 255.0,
+                        *g as f32 / 255.0,
+                        *b as f32 / 255.0,
                         alpha,
                     ];
 
@@ -1143,4 +1144,99 @@ pub fn render_initial_frame(
     output.present();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_sprite() -> crate::sprite::Sprite {
+        crate::sprite::Sprite {
+            texture_id: 1,
+            region: (0, 0, 64, 32),
+            origin: (0.0, 0.0),
+            color: [255, 255, 255, 255],
+        }
+    }
+
+    fn test_cmd() -> SpriteDrawCommand {
+        SpriteDrawCommand {
+            sprite_id: 1,
+            x: 10.0,
+            y: 20.0,
+            rot: 0.0,
+            scale: 1.0,
+            alpha: 1.0,
+            flip_x: false,
+            flip_y: false,
+            z: 0,
+            color_override: None,
+            size_override: None,
+        }
+    }
+
+    #[test]
+    fn vertex_colors_are_straight_alpha() {
+        // Regression for the double-premultiply bug: with alpha=0.5 the RGB
+        // components must stay 1.0 — premultiplication happens in the shader.
+        let sprite = test_sprite();
+        let mut cmd = test_cmd();
+        cmd.alpha = 0.5;
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        for v in &verts {
+            assert_eq!(v.color, [1.0, 1.0, 1.0, 0.5]);
+        }
+    }
+
+    #[test]
+    fn sprite_color_combines_with_command_alpha() {
+        let mut sprite = test_sprite();
+        sprite.color = [255, 0, 0, 128];
+        let mut cmd = test_cmd();
+        cmd.alpha = 0.5;
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        let a = 128.0 / 255.0 * 0.5;
+        for v in &verts {
+            assert!((v.color[0] - 1.0).abs() < 1e-6);
+            assert_eq!(v.color[1], 0.0);
+            assert!((v.color[3] - a).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn unrotated_quad_positions_and_uvs() {
+        let sprite = test_sprite();
+        let cmd = test_cmd();
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        // Top-left vertex at (x, y), full-texture UVs
+        assert_eq!(verts[0].position, [10.0, 20.0]);
+        assert_eq!(verts[0].tex_coords, [0.0, 0.0]);
+        // Bottom-right vertex at (x + w, y + h)
+        assert_eq!(verts[4].position, [74.0, 52.0]);
+        assert_eq!(verts[4].tex_coords, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn flip_x_swaps_us() {
+        let sprite = test_sprite();
+        let mut cmd = test_cmd();
+        cmd.flip_x = true;
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        assert_eq!(verts[0].tex_coords, [1.0, 0.0]);
+        assert_eq!(verts[4].tex_coords, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn origin_shifts_quad() {
+        let mut sprite = test_sprite();
+        sprite.origin = (32.0, 16.0); // center
+        let cmd = test_cmd();
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        assert_eq!(verts[0].position, [10.0 - 32.0, 20.0 - 16.0]);
+    }
 }

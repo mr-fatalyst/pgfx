@@ -71,6 +71,9 @@ pub struct Engine {
     pub(crate) last_frame: Instant,
     pub(crate) dt: f32,
     pub(crate) fps: u32,
+    // FPS is averaged over ~0.5s windows to avoid jitter
+    pub(crate) fps_accum_time: f32,
+    pub(crate) fps_accum_frames: u32,
 
     // Running state
     pub(crate) running: bool,
@@ -106,6 +109,8 @@ impl Engine {
             last_frame: now,
             dt: 0.016, // ~60 fps default
             fps: 60,
+            fps_accum_time: 0.0,
+            fps_accum_frames: 0,
             running: true,
         }
     }
@@ -259,6 +264,8 @@ struct AppHandler {
     window_created: bool,
     ready_called: bool,
     frame_limiter: FrameLimiter,
+    // First Python exception raised in a callback; re-raised from run()
+    error: Option<PyErr>,
 }
 
 impl AppHandler {
@@ -275,6 +282,7 @@ impl AppHandler {
             window_created: false,
             ready_called: false,
             frame_limiter: FrameLimiter::new(fps_limit),
+            error: None,
         }
     }
 }
@@ -365,11 +373,11 @@ impl ApplicationHandler for AppHandler {
                     // Call on_ready callback if provided
                     if !self.ready_called {
                         if let Some(ref on_ready) = self.on_ready_fn {
-                            Python::attach(|py| {
-                                if let Err(e) = on_ready.call0(py) {
-                                    eprintln!("Error in on_ready callback: {}", e);
-                                }
-                            });
+                            if let Err(e) = Python::attach(|py| on_ready.call0(py)) {
+                                self.error = Some(e);
+                                event_loop.exit();
+                                return;
+                            }
                         }
                         self.ready_called = true;
                     }
@@ -426,8 +434,13 @@ impl ApplicationHandler for AppHandler {
                     engine.last_frame = now;
                     engine.dt = frame_time;
 
-                    if frame_time > 0.0 {
-                        engine.fps = (1.0 / frame_time) as u32;
+                    engine.fps_accum_time += frame_time;
+                    engine.fps_accum_frames += 1;
+                    if engine.fps_accum_time >= 0.5 {
+                        engine.fps =
+                            (engine.fps_accum_frames as f32 / engine.fps_accum_time).round() as u32;
+                        engine.fps_accum_time = 0.0;
+                        engine.fps_accum_frames = 0;
                     }
 
                     true
@@ -441,21 +454,19 @@ impl ApplicationHandler for AppHandler {
 
                 // Call Python update function
                 let dt = with_engine(|engine| engine.dt as f64).unwrap_or(0.016);
-                let mut should_exit = false;
 
-                Python::attach(|py| match self.update_fn.call1(py, (dt,)) {
-                    Ok(result) => {
-                        if let Ok(continue_running) = result.extract::<bool>(py) {
-                            if !continue_running {
-                                should_exit = true;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error in update function: {}", e);
-                        should_exit = true;
-                    }
+                let update_result: PyResult<bool> = Python::attach(|py| {
+                    let result = self.update_fn.call1(py, (dt,))?;
+                    Ok(result.extract::<bool>(py).unwrap_or(true))
                 });
+
+                let should_exit = match update_result {
+                    Ok(continue_running) => !continue_running,
+                    Err(e) => {
+                        self.error = Some(e);
+                        true
+                    }
+                };
 
                 if should_exit {
                     with_engine(|engine| engine.running = false).ok();
@@ -464,12 +475,12 @@ impl ApplicationHandler for AppHandler {
                 }
 
                 // Call Python render function
-                Python::attach(|py| {
-                    if let Err(e) = self.render_fn.call0(py) {
-                        eprintln!("Error in render function: {}", e);
-                        event_loop.exit();
-                    }
-                });
+                if let Err(e) = Python::attach(|py| self.render_fn.call0(py)) {
+                    self.error = Some(e);
+                    with_engine(|engine| engine.running = false).ok();
+                    event_loop.exit();
+                    return;
+                }
 
                 // Clear per-frame input state
                 with_engine(|engine| {
@@ -531,7 +542,8 @@ pub fn init(
     // Check if already initialized
     if ENGINE.get().is_some() {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "pgfx already initialized. Call quit() first.",
+            "pgfx already initialized; re-initialization is not supported yet \
+             (restart the process to create a new window)",
         ));
     }
 
@@ -556,6 +568,7 @@ pub fn init(
 #[pyfunction]
 #[pyo3(signature = (update_fn, render_fn, on_ready=None))]
 pub fn run(
+    py: Python<'_>,
     update_fn: Py<PyAny>,
     render_fn: Py<PyAny>,
     on_ready: Option<Py<PyAny>>,
@@ -570,18 +583,25 @@ pub fn run(
     // Get fps_limit from config
     let fps_limit = with_engine(|engine| engine.config.fps_limit)?;
 
-    // Create event loop
-    let event_loop = EventLoop::new().map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create event loop: {}", e))
-    })?;
-
     // Create application handler
     let mut app = AppHandler::new(update_fn, render_fn, on_ready, fps_limit);
 
-    // Run the event loop - this takes ownership and never returns until exit
-    event_loop.run_app(&mut app).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Event loop error: {}", e))
-    })?;
+    // Release the GIL for the whole loop so user Python threads keep running;
+    // callbacks re-acquire it via Python::attach. The event loop is created
+    // inside the closure because EventLoop is not Send.
+    let loop_result: Result<(), String> = py.detach(|| {
+        let event_loop =
+            EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
+        event_loop
+            .run_app(&mut app)
+            .map_err(|e| format!("Event loop error: {}", e))
+    });
+
+    // A Python exception from a callback takes precedence over loop errors
+    if let Some(err) = app.error.take() {
+        return Err(err);
+    }
+    loop_result.map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
     Ok(())
 }
@@ -644,6 +664,16 @@ mod tests {
         assert!(!config.fullscreen);
         assert!(config.resizable);
         assert_eq!(config.fps_limit, 60);
+    }
+
+    #[test]
+    fn frame_limiter_disabled_at_zero() {
+        let limiter = FrameLimiter::new(0);
+        assert!(limiter.target_frame_time.is_none());
+
+        let limiter = FrameLimiter::new(60);
+        let target = limiter.target_frame_time.unwrap();
+        assert!((target.as_secs_f64() - 1.0 / 60.0).abs() < 1e-9);
     }
 
     #[test]

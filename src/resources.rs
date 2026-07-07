@@ -1,5 +1,6 @@
-// Centralized resource handle management
-// Uses generational indices for safe ID reuse
+// Centralized resource handle management.
+// IDs come from a monotonic counter and are never reused, so a stale ID
+// resolves to None instead of aliasing a newer resource.
 
 use std::collections::HashMap;
 
@@ -39,5 +40,21 @@ impl<T> ResourcePool<T> {
 impl<T> Default for ResourcePool<T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_never_reused() {
+        let mut pool = ResourcePool::new();
+        let a = pool.insert("a");
+        pool.remove(a);
+        let b = pool.insert("b");
+        assert_ne!(a, b);
+        assert!(pool.get(a).is_none());
+        assert_eq!(pool.get(b), Some(&"b"));
     }
 }

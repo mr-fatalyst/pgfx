@@ -67,3 +67,11 @@ def test_gamepad_constants_exist():
     assert pgfx.GAMEPAD_AXIS_LY is not None
     assert pgfx.GAMEPAD_TRIGGER_L is not None
     assert pgfx.GAMEPAD_TRIGGER_R is not None
+
+
+def test_constants_match_native_core():
+    """Every constant the Rust core exports must match its Python mirror."""
+    native = pgfx._native.native_constants()
+    assert native, "native_constants() returned nothing"
+    for name, value in native.items():
+        assert getattr(pgfx, name) == value, f"{name}: python != native"

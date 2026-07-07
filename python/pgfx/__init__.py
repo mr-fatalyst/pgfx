@@ -108,8 +108,24 @@ def run(update_fn, render_fn, on_ready=None):
         update_fn: Called each frame with dt (delta time). Return False to exit.
         render_fn: Called each frame to render graphics.
         on_ready: Optional callback called once when GPU is initialized.
+
+    If the PGFX_MAX_FRAMES environment variable is set, the loop exits
+    automatically after that many frames (used for smoke tests and CI).
     """
+    import os
+
     from pgfx._batch import _flush
+
+    max_frames = int(os.environ.get("PGFX_MAX_FRAMES", 0))
+    if max_frames > 0:
+        inner_update = update_fn
+        frame_counter = [0]
+
+        def update_fn(dt):
+            frame_counter[0] += 1
+            if frame_counter[0] > max_frames:
+                return False
+            return inner_update(dt)
 
     def _wrapped_render():
         render_fn()

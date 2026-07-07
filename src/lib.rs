@@ -9,7 +9,6 @@ mod resources;
 mod sprite;
 mod text;
 mod texture;
-mod window;
 
 use pyo3::prelude::*;
 
@@ -36,6 +35,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(input::gamepad_button, m)?)?;
     m.add_function(wrap_pyfunction!(input::gamepad_axis, m)?)?;
     m.add_function(wrap_pyfunction!(input::gamepad_trigger, m)?)?;
+    m.add_function(wrap_pyfunction!(input::native_constants, m)?)?;
 
     // Texture
     m.add_function(wrap_pyfunction!(texture::texture_load, m)?)?;
@@ -92,7 +92,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(particles::particles_stop, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_move_to, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_update, m)?)?;
-    m.add_function(wrap_pyfunction!(particles::particles_render, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_is_alive, m)?)?;
     m.add_function(wrap_pyfunction!(particles::particles_count, m)?)?;
 

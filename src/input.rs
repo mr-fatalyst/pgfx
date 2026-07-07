@@ -1,8 +1,75 @@
 use gilrs::{Axis, Button, Gilrs};
 use pyo3::prelude::*;
-use std::collections::HashSet;
+use pyo3::types::PyDict;
+use std::collections::{HashMap, HashSet};
 use winit::event::MouseButton;
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+// Single source of truth for gamepad/mouse constants.
+// python/pgfx/constants.py must mirror these values; the test suite
+// cross-checks them via native_constants().
+pub const GAMEPAD_A: u32 = 0;
+pub const GAMEPAD_B: u32 = 1;
+pub const GAMEPAD_X: u32 = 2;
+pub const GAMEPAD_Y: u32 = 3;
+pub const GAMEPAD_LB: u32 = 4;
+pub const GAMEPAD_RB: u32 = 5;
+pub const GAMEPAD_LT: u32 = 6;
+pub const GAMEPAD_RT: u32 = 7;
+pub const GAMEPAD_BACK: u32 = 8;
+pub const GAMEPAD_START: u32 = 9;
+pub const GAMEPAD_LSTICK: u32 = 10;
+pub const GAMEPAD_RSTICK: u32 = 11;
+pub const GAMEPAD_DPAD_UP: u32 = 12;
+pub const GAMEPAD_DPAD_DOWN: u32 = 13;
+pub const GAMEPAD_DPAD_LEFT: u32 = 14;
+pub const GAMEPAD_DPAD_RIGHT: u32 = 15;
+pub const GAMEPAD_GUIDE: u32 = 16;
+
+pub const GAMEPAD_AXIS_LX: u32 = 0;
+pub const GAMEPAD_AXIS_LY: u32 = 1;
+pub const GAMEPAD_AXIS_RX: u32 = 2;
+pub const GAMEPAD_AXIS_RY: u32 = 3;
+
+pub const GAMEPAD_TRIGGER_L: u32 = 0;
+pub const GAMEPAD_TRIGGER_R: u32 = 1;
+
+pub const MOUSE_LEFT: u32 = 0;
+pub const MOUSE_RIGHT: u32 = 1;
+pub const MOUSE_MIDDLE: u32 = 2;
+
+/// Export native constants for cross-checking python/pgfx/constants.py.
+#[pyfunction]
+pub fn native_constants(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("GAMEPAD_A", GAMEPAD_A)?;
+    d.set_item("GAMEPAD_B", GAMEPAD_B)?;
+    d.set_item("GAMEPAD_X", GAMEPAD_X)?;
+    d.set_item("GAMEPAD_Y", GAMEPAD_Y)?;
+    d.set_item("GAMEPAD_LB", GAMEPAD_LB)?;
+    d.set_item("GAMEPAD_RB", GAMEPAD_RB)?;
+    d.set_item("GAMEPAD_LT", GAMEPAD_LT)?;
+    d.set_item("GAMEPAD_RT", GAMEPAD_RT)?;
+    d.set_item("GAMEPAD_BACK", GAMEPAD_BACK)?;
+    d.set_item("GAMEPAD_START", GAMEPAD_START)?;
+    d.set_item("GAMEPAD_LSTICK", GAMEPAD_LSTICK)?;
+    d.set_item("GAMEPAD_RSTICK", GAMEPAD_RSTICK)?;
+    d.set_item("GAMEPAD_DPAD_UP", GAMEPAD_DPAD_UP)?;
+    d.set_item("GAMEPAD_DPAD_DOWN", GAMEPAD_DPAD_DOWN)?;
+    d.set_item("GAMEPAD_DPAD_LEFT", GAMEPAD_DPAD_LEFT)?;
+    d.set_item("GAMEPAD_DPAD_RIGHT", GAMEPAD_DPAD_RIGHT)?;
+    d.set_item("GAMEPAD_GUIDE", GAMEPAD_GUIDE)?;
+    d.set_item("GAMEPAD_AXIS_LX", GAMEPAD_AXIS_LX)?;
+    d.set_item("GAMEPAD_AXIS_LY", GAMEPAD_AXIS_LY)?;
+    d.set_item("GAMEPAD_AXIS_RX", GAMEPAD_AXIS_RX)?;
+    d.set_item("GAMEPAD_AXIS_RY", GAMEPAD_AXIS_RY)?;
+    d.set_item("GAMEPAD_TRIGGER_L", GAMEPAD_TRIGGER_L)?;
+    d.set_item("GAMEPAD_TRIGGER_R", GAMEPAD_TRIGGER_R)?;
+    d.set_item("MOUSE_LEFT", MOUSE_LEFT)?;
+    d.set_item("MOUSE_RIGHT", MOUSE_RIGHT)?;
+    d.set_item("MOUSE_MIDDLE", MOUSE_MIDDLE)?;
+    Ok(d)
+}
 
 /// Input state for keyboard and mouse
 pub struct InputState {
@@ -16,7 +83,7 @@ pub struct InputState {
     pub mouse_down: [bool; 3],     // left, right, middle
     pub mouse_pressed: [bool; 3],  // pressed this frame
     pub mouse_released: [bool; 3], // released this frame
-    pub mouse_wheel: i32,          // wheel delta this frame
+    pub mouse_wheel: f32,          // wheel delta this frame (fractional for touchpads)
 }
 
 impl InputState {
@@ -29,7 +96,7 @@ impl InputState {
             mouse_down: [false; 3],
             mouse_pressed: [false; 3],
             mouse_released: [false; 3],
-            mouse_wheel: 0,
+            mouse_wheel: 0.0,
         }
     }
 
@@ -39,7 +106,7 @@ impl InputState {
         self.keys_released.clear();
         self.mouse_pressed = [false; 3];
         self.mouse_released = [false; 3];
-        self.mouse_wheel = 0;
+        self.mouse_wheel = 0.0;
     }
 
     /// Handle key press
@@ -77,8 +144,8 @@ impl InputState {
         }
     }
 
-    /// Handle mouse wheel
-    pub fn on_mouse_wheel(&mut self, delta: i32) {
+    /// Handle mouse wheel (accumulates fractional deltas from touchpads)
+    pub fn on_mouse_wheel(&mut self, delta: f32) {
         self.mouse_wheel += delta;
     }
 }
@@ -111,6 +178,7 @@ impl GamepadState {
 pub struct GamepadManager {
     gilrs: Gilrs,
     gamepads: [GamepadState; 4], // Support up to 4 gamepads
+    slot_map: HashMap<gilrs::GamepadId, usize>,
 }
 
 impl GamepadManager {
@@ -124,6 +192,7 @@ impl GamepadManager {
                 GamepadState::new(),
                 GamepadState::new(),
             ],
+            slot_map: HashMap::new(),
         })
     }
 
@@ -169,36 +238,19 @@ impl GamepadManager {
         }
     }
 
-    /// Find a slot for the given gamepad ID (0-3)
-    /// Returns the existing slot if already assigned, or finds a free slot
+    /// Find a slot (0-3) for the given gamepad ID.
+    /// A gamepad keeps its slot for the lifetime of the manager, so a
+    /// reconnected pad lands back in the same slot.
     fn find_gamepad_slot(&mut self, gamepad_id: gilrs::GamepadId) -> Option<usize> {
-        // First check if this gamepad is already assigned a slot
-        for gamepad in self.gamepads.iter() {
-            if gamepad.connected {
-                // We need to track gamepad IDs to slots
-                // For now, use a simple approach: map gamepad index to slot
-                if self.gilrs.gamepad(gamepad_id).is_connected() {
-                    // Just use the first 4 connected gamepads
-                    let connected_count = self
-                        .gilrs
-                        .gamepads()
-                        .filter(|(_, gp)| gp.is_connected())
-                        .take_while(|(id, _)| *id != gamepad_id)
-                        .count();
-                    return Some(connected_count.min(3));
-                }
-            }
+        if let Some(slot) = self.slot_map.get(&gamepad_id) {
+            return Some(*slot);
         }
 
-        // Find first free slot
-        for (slot, gamepad) in self.gamepads.iter().enumerate() {
-            if !gamepad.connected {
-                return Some(slot);
-            }
-        }
-
-        // All slots full, use first slot
-        Some(0)
+        // Assign the first slot not taken by another gamepad
+        let taken: Vec<usize> = self.slot_map.values().copied().collect();
+        let free_slot = (0..self.gamepads.len()).find(|s| !taken.contains(s))?;
+        self.slot_map.insert(gamepad_id, free_slot);
+        Some(free_slot)
     }
 
     pub fn get_gamepad(&self, idx: usize) -> Option<&GamepadState> {
@@ -212,26 +264,27 @@ impl GamepadManager {
 
 /// Map gilrs button to our button index
 fn map_button(button: Button) -> Option<usize> {
-    match button {
-        Button::South => Some(0),         // A on Xbox, Cross on PS
-        Button::East => Some(1),          // B on Xbox, Circle on PS
-        Button::West => Some(2),          // X on Xbox, Square on PS
-        Button::North => Some(3),         // Y on Xbox, Triangle on PS
-        Button::LeftTrigger => Some(4),   // L1/LB
-        Button::RightTrigger => Some(5),  // R1/RB
-        Button::LeftTrigger2 => Some(6),  // L2/LT (as button)
-        Button::RightTrigger2 => Some(7), // R2/RT (as button)
-        Button::Select => Some(8),        // Select/Back/Share
-        Button::Start => Some(9),         // Start/Options
-        Button::LeftThumb => Some(10),    // L3
-        Button::RightThumb => Some(11),   // R3
-        Button::DPadUp => Some(12),
-        Button::DPadDown => Some(13),
-        Button::DPadLeft => Some(14),
-        Button::DPadRight => Some(15),
-        Button::Mode => Some(16), // Guide/Home/PS button
-        _ => None,
-    }
+    let idx = match button {
+        Button::South => GAMEPAD_A,           // A on Xbox, Cross on PS
+        Button::East => GAMEPAD_B,            // B on Xbox, Circle on PS
+        Button::West => GAMEPAD_X,            // X on Xbox, Square on PS
+        Button::North => GAMEPAD_Y,           // Y on Xbox, Triangle on PS
+        Button::LeftTrigger => GAMEPAD_LB,    // L1/LB
+        Button::RightTrigger => GAMEPAD_RB,   // R1/RB
+        Button::LeftTrigger2 => GAMEPAD_LT,   // L2/LT (as button)
+        Button::RightTrigger2 => GAMEPAD_RT,  // R2/RT (as button)
+        Button::Select => GAMEPAD_BACK,       // Select/Back/Share
+        Button::Start => GAMEPAD_START,       // Start/Options
+        Button::LeftThumb => GAMEPAD_LSTICK,  // L3
+        Button::RightThumb => GAMEPAD_RSTICK, // R3
+        Button::DPadUp => GAMEPAD_DPAD_UP,
+        Button::DPadDown => GAMEPAD_DPAD_DOWN,
+        Button::DPadLeft => GAMEPAD_DPAD_LEFT,
+        Button::DPadRight => GAMEPAD_DPAD_RIGHT,
+        Button::Mode => GAMEPAD_GUIDE, // Guide/Home/PS button
+        _ => return None,
+    };
+    Some(idx as usize)
 }
 
 /// Map gilrs axis to our axis index
@@ -429,7 +482,7 @@ pub fn handle_mouse_button(button: MouseButton, pressed: bool) {
 /// Handle mouse wheel event from winit
 pub fn handle_mouse_wheel(delta: f32) {
     crate::engine::with_engine(|engine| {
-        engine.input.on_mouse_wheel(delta as i32);
+        engine.input.on_mouse_wheel(delta);
     })
     .ok();
 }
@@ -500,7 +553,7 @@ pub fn mouse_pressed(btn: u32) -> PyResult<bool> {
 }
 
 #[pyfunction]
-pub fn mouse_wheel() -> PyResult<i32> {
+pub fn mouse_wheel() -> PyResult<f32> {
     crate::engine::with_engine(|engine| engine.input.mouse_wheel)
 }
 
@@ -566,4 +619,53 @@ pub fn gamepad_trigger(idx: u32, trigger: u32) -> PyResult<f32> {
             0.0
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_pressed_lasts_one_frame() {
+        let mut input = InputState::new();
+        input.on_key_down(5);
+        assert!(input.keys_down.contains(&5));
+        assert!(input.keys_pressed.contains(&5));
+
+        input.clear_frame_state();
+        assert!(input.keys_down.contains(&5));
+        assert!(!input.keys_pressed.contains(&5));
+
+        // Key repeat while held must not re-trigger "pressed"
+        input.on_key_down(5);
+        assert!(!input.keys_pressed.contains(&5));
+
+        input.on_key_up(5);
+        assert!(!input.keys_down.contains(&5));
+        assert!(input.keys_released.contains(&5));
+        input.clear_frame_state();
+        assert!(!input.keys_released.contains(&5));
+    }
+
+    #[test]
+    fn mouse_wheel_accumulates_fractional_deltas() {
+        let mut input = InputState::new();
+        input.on_mouse_wheel(0.4);
+        input.on_mouse_wheel(0.4);
+        assert!((input.mouse_wheel - 0.8).abs() < 1e-6);
+        input.clear_frame_state();
+        assert_eq!(input.mouse_wheel, 0.0);
+    }
+
+    #[test]
+    fn button_mapping_matches_exported_constants() {
+        assert_eq!(map_button(Button::South), Some(GAMEPAD_A as usize));
+        assert_eq!(map_button(Button::Select), Some(GAMEPAD_BACK as usize));
+        assert_eq!(map_button(Button::Start), Some(GAMEPAD_START as usize));
+        assert_eq!(map_button(Button::LeftThumb), Some(GAMEPAD_LSTICK as usize));
+        assert_eq!(map_button(Button::DPadUp), Some(GAMEPAD_DPAD_UP as usize));
+        assert_eq!(map_button(Button::Mode), Some(GAMEPAD_GUIDE as usize));
+        assert_eq!(map_axis(Axis::LeftStickX), Some(GAMEPAD_AXIS_LX as usize));
+        assert_eq!(map_axis(Axis::RightZ), Some(4 + GAMEPAD_TRIGGER_R as usize));
+    }
 }

@@ -1,80 +1,59 @@
 use pyo3::prelude::*;
 use rodio::cpal::BufferSize;
+use rodio::source::ChannelVolume;
 use rodio::{Decoder, OutputStreamBuilder, Source};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub type SoundId = u32;
 pub type MusicId = u32;
 
-// Thread-local audio state (OutputStream is not Send on macOS)
+// Audio state lives on the thread that first used the audio API (rodio's
+// OutputStream is not Send on macOS). with_audio() guards against use from
+// other threads instead of silently creating a second output stream.
 thread_local! {
     static AUDIO: RefCell<Option<AudioState>> = const { RefCell::new(None) };
 }
 
-/// Sound data - raw file bytes in memory, decoded on playback
-pub struct SoundData {
-    data: Arc<Vec<u8>>,
+static AUDIO_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+/// Decoded-on-demand audio clip: raw file bytes shared via Arc,
+/// so creating a playback source is a pointer copy, not a data copy.
+pub struct AudioData {
+    data: Arc<[u8]>,
 }
 
-impl SoundData {
+impl AudioData {
     fn from_file(path: &str) -> Result<Self, String> {
-        // Read entire file into memory
         let data = std::fs::read(path).map_err(|e| format!("Failed to read audio file: {}", e))?;
+        let data: Arc<[u8]> = data.into();
 
         // Verify it can be decoded
-        let cursor = Cursor::new(data.clone());
-        Decoder::new(cursor).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        Decoder::new(Cursor::new(data.clone()))
+            .map_err(|e| format!("Failed to decode audio: {}", e))?;
 
-        Ok(Self {
-            data: Arc::new(data),
-        })
+        Ok(Self { data })
     }
 
-    fn create_source(&self) -> Result<Decoder<Cursor<Vec<u8>>>, String> {
-        let cursor = Cursor::new((*self.data).clone());
-        Decoder::new(cursor).map_err(|e| format!("Failed to decode audio: {}", e))
-    }
-}
-
-/// Music data - raw file bytes in memory, decoded on playback
-pub struct MusicData {
-    data: Arc<Vec<u8>>,
-}
-
-impl MusicData {
-    fn from_file(path: &str) -> Result<Self, String> {
-        // Read entire file into memory
-        let data = std::fs::read(path).map_err(|e| format!("Failed to read music file: {}", e))?;
-
-        // Verify it can be decoded
-        let cursor = Cursor::new(data.clone());
-        Decoder::new(cursor).map_err(|e| format!("Failed to decode music: {}", e))?;
-
-        Ok(Self {
-            data: Arc::new(data),
-        })
-    }
-
-    fn create_source(&self) -> Result<Decoder<Cursor<Vec<u8>>>, String> {
-        let cursor = Cursor::new((*self.data).clone());
-        Decoder::new(cursor).map_err(|e| format!("Failed to decode music: {}", e))
+    fn create_source(&self) -> Result<Decoder<Cursor<Arc<[u8]>>>, String> {
+        Decoder::new(Cursor::new(self.data.clone()))
+            .map_err(|e| format!("Failed to decode audio: {}", e))
     }
 }
 
 /// Audio state managed by the engine
 pub struct AudioState {
     // Keep the output stream alive
-    output_stream: Arc<rodio::OutputStream>,
+    output_stream: rodio::OutputStream,
 
     // Resource pools
-    sounds: crate::resources::ResourcePool<SoundData>,
-    music: crate::resources::ResourcePool<MusicData>,
+    sounds: crate::resources::ResourcePool<AudioData>,
+    music: crate::resources::ResourcePool<AudioData>,
 
-    // Active sound playback sinks
-    sound_sinks: HashMap<SoundId, Vec<rodio::Sink>>,
+    // Active sound playback sinks with their base volume (before master)
+    sound_sinks: HashMap<SoundId, Vec<(rodio::Sink, f32)>>,
 
     // Music playback (only one music track at a time)
     music_sink: Option<(MusicId, rodio::Sink)>,
@@ -86,15 +65,25 @@ pub struct AudioState {
 
 impl AudioState {
     pub fn new() -> Result<Self, String> {
-        // Use larger buffer (300ms at 48kHz = 14400 frames) for stability in VM environments
-        let output_stream = OutputStreamBuilder::from_default_device()
-            .map_err(|e| format!("Failed to get default audio device: {}", e))?
-            .with_buffer_size(BufferSize::Fixed(14400))
+        let mut builder = OutputStreamBuilder::from_default_device()
+            .map_err(|e| format!("Failed to get default audio device: {}", e))?;
+
+        // Default: the device's native buffer size (lowest reliable latency).
+        // PGFX_AUDIO_BUFFER=<frames> opts into a fixed size, e.g. large values
+        // for crackle-free audio in VMs/CI (14400 = 300ms at 48kHz).
+        if let Ok(frames) = std::env::var("PGFX_AUDIO_BUFFER") {
+            let frames: u32 = frames
+                .parse()
+                .map_err(|_| "PGFX_AUDIO_BUFFER must be a positive integer".to_string())?;
+            builder = builder.with_buffer_size(BufferSize::Fixed(frames));
+        }
+
+        let output_stream = builder
             .open_stream()
             .map_err(|e| format!("Failed to open audio stream: {}", e))?;
 
         Ok(Self {
-            output_stream: Arc::new(output_stream),
+            output_stream,
             sounds: crate::resources::ResourcePool::new(),
             music: crate::resources::ResourcePool::new(),
             sound_sinks: HashMap::new(),
@@ -105,9 +94,7 @@ impl AudioState {
     }
 
     pub fn load_sound(&mut self, path: &str) -> Result<SoundId, String> {
-        let sound_data = SoundData::from_file(path)?;
-        let id = self.sounds.insert(sound_data);
-        Ok(id)
+        Ok(self.sounds.insert(AudioData::from_file(path)?))
     }
 
     pub fn free_sound(&mut self, id: SoundId) {
@@ -120,7 +107,7 @@ impl AudioState {
         &mut self,
         id: SoundId,
         volume: f32,
-        _pan: f32,
+        pan: f32,
         loop_: bool,
     ) -> Result<(), String> {
         let sound = self
@@ -128,32 +115,41 @@ impl AudioState {
             .get(id)
             .ok_or_else(|| format!("Invalid sound ID: {}", id))?;
 
-        let mixer = self.output_stream.mixer();
-        let sink = rodio::Sink::connect_new(mixer);
+        let sink = rodio::Sink::connect_new(self.output_stream.mixer());
+        sink.set_volume(volume * self.master_volume);
 
         let source = sound.create_source()?;
-        let amplified = source.amplify(volume * self.master_volume);
 
-        if loop_ {
-            sink.append(amplified.repeat_infinite());
+        // Pan by playing the (mono-mixed) source at different L/R volumes.
+        // pan=0 keeps the source untouched to preserve stereo.
+        let pan = pan.clamp(-1.0, 1.0);
+        if pan != 0.0 {
+            let left = 1.0 - pan.max(0.0);
+            let right = 1.0 + pan.min(0.0);
+            let panned = ChannelVolume::new(source, vec![left, right]);
+            if loop_ {
+                sink.append(panned.repeat_infinite());
+            } else {
+                sink.append(panned);
+            }
+        } else if loop_ {
+            sink.append(source.repeat_infinite());
         } else {
-            sink.append(amplified);
+            sink.append(source);
         }
 
-        // Store the sink so we can stop it later
-        self.sound_sinks.entry(id).or_default().push(sink);
-
-        // Clean up finished sinks
-        if let Some(sinks) = self.sound_sinks.get_mut(&id) {
-            sinks.retain(|s| !s.empty());
-        }
+        // Store the sink (with its base volume) so we can stop it or
+        // re-apply master volume later; drop finished sinks on the way.
+        let sinks = self.sound_sinks.entry(id).or_default();
+        sinks.retain(|(s, _)| !s.empty());
+        sinks.push((sink, volume));
 
         Ok(())
     }
 
     pub fn stop_sound(&mut self, id: SoundId) {
         if let Some(sinks) = self.sound_sinks.get_mut(&id) {
-            for sink in sinks.iter() {
+            for (sink, _) in sinks.iter() {
                 sink.stop();
             }
             sinks.clear();
@@ -161,9 +157,7 @@ impl AudioState {
     }
 
     pub fn load_music(&mut self, path: &str) -> Result<MusicId, String> {
-        let music_data = MusicData::from_file(path)?;
-        let id = self.music.insert(music_data);
-        Ok(id)
+        Ok(self.music.insert(AudioData::from_file(path)?))
     }
 
     pub fn free_music(&mut self, id: MusicId) {
@@ -185,16 +179,14 @@ impl AudioState {
         // Stop current music if any
         self.music_sink = None;
 
-        let mixer = self.output_stream.mixer();
-        let sink = rodio::Sink::connect_new(mixer);
+        let sink = rodio::Sink::connect_new(self.output_stream.mixer());
+        sink.set_volume(self.music_volume * self.master_volume);
 
         let source = music.create_source()?;
-        let amplified = source.amplify(self.music_volume * self.master_volume);
-
         if loop_ {
-            sink.append(amplified.repeat_infinite());
+            sink.append(source.repeat_infinite());
         } else {
-            sink.append(amplified);
+            sink.append(source);
         }
 
         self.music_sink = Some((id, sink));
@@ -202,52 +194,72 @@ impl AudioState {
         Ok(())
     }
 
-    pub fn stop_music(&mut self) {
-        if let Some((_, sink)) = &self.music_sink {
-            sink.stop();
-        }
-        self.music_sink = None;
-    }
-
-    pub fn pause_music(&mut self) -> Result<(), String> {
-        if let Some((_, sink)) = &self.music_sink {
-            sink.pause();
-            Ok(())
-        } else {
-            Err("No music is currently playing".to_string())
+    /// Stop music if the given track is the one playing (no-op otherwise)
+    pub fn stop_music(&mut self, id: MusicId) {
+        if let Some((current_id, sink)) = &self.music_sink {
+            if *current_id == id {
+                sink.stop();
+                self.music_sink = None;
+            }
         }
     }
 
-    pub fn resume_music(&mut self) -> Result<(), String> {
-        if let Some((_, sink)) = &self.music_sink {
-            sink.play();
-            Ok(())
-        } else {
-            Err("No music is currently playing".to_string())
+    /// Pause music if the given track is the one playing (no-op otherwise)
+    pub fn pause_music(&mut self, id: MusicId) {
+        if let Some((current_id, sink)) = &self.music_sink {
+            if *current_id == id {
+                sink.pause();
+            }
+        }
+    }
+
+    /// Resume music if the given track is the one paused (no-op otherwise)
+    pub fn resume_music(&mut self, id: MusicId) {
+        if let Some((current_id, sink)) = &self.music_sink {
+            if *current_id == id {
+                sink.play();
+            }
         }
     }
 
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 1.0);
-
-        // Note: In rodio 0.21, volume is applied when creating the source
-        // We can't change volume of already-playing sounds
-        // This will affect new sounds/music played after this call
+        self.apply_volumes();
     }
 
     pub fn set_music_volume(&mut self, volume: f32) {
         self.music_volume = volume.clamp(0.0, 1.0);
+        self.apply_volumes();
+    }
 
-        // Note: Volume is applied when creating the source
-        // This will affect new music played after this call
+    /// Re-apply volumes to everything currently playing
+    fn apply_volumes(&mut self) {
+        for sinks in self.sound_sinks.values_mut() {
+            sinks.retain(|(sink, _)| !sink.empty());
+            for (sink, base) in sinks.iter() {
+                sink.set_volume(base * self.master_volume);
+            }
+        }
+        if let Some((_, sink)) = &self.music_sink {
+            sink.set_volume(self.music_volume * self.master_volume);
+        }
     }
 }
 
-// Helper function to access audio state (thread-local)
+// Helper function to access audio state (owned by the first thread that used it)
 fn with_audio<F, R>(f: F) -> PyResult<R>
 where
     F: FnOnce(&mut AudioState) -> Result<R, String>,
 {
+    let current = std::thread::current().id();
+    let owner = *AUDIO_THREAD.get_or_init(|| current);
+    if owner != current {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "pgfx audio API can only be used from the thread that first used it \
+             (usually the main thread)",
+        ));
+    }
+
     AUDIO.with(|audio_cell| {
         let mut audio_opt = audio_cell.borrow_mut();
 
@@ -313,21 +325,27 @@ pub fn music_play(mus: MusicId, loop_: bool) -> PyResult<()> {
 }
 
 #[pyfunction]
-pub fn music_stop(_mus: MusicId) -> PyResult<()> {
+pub fn music_stop(mus: MusicId) -> PyResult<()> {
     with_audio(|audio| {
-        audio.stop_music();
+        audio.stop_music(mus);
         Ok(())
     })
 }
 
 #[pyfunction]
-pub fn music_pause(_mus: MusicId) -> PyResult<()> {
-    with_audio(|audio| audio.pause_music())
+pub fn music_pause(mus: MusicId) -> PyResult<()> {
+    with_audio(|audio| {
+        audio.pause_music(mus);
+        Ok(())
+    })
 }
 
 #[pyfunction]
-pub fn music_resume(_mus: MusicId) -> PyResult<()> {
-    with_audio(|audio| audio.resume_music())
+pub fn music_resume(mus: MusicId) -> PyResult<()> {
+    with_audio(|audio| {
+        audio.resume_music(mus);
+        Ok(())
+    })
 }
 
 #[pyfunction]

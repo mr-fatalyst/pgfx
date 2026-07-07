@@ -8,6 +8,24 @@ Lightweight 2D game library for Python, inspired by Haaf's Game Engine.
 pip install pgfx
 ```
 
+Prebuilt wheels are available for Linux, macOS and Windows — no extra
+dependencies needed.
+
+### Building from source
+
+Building (or installing from sdist) requires a Rust toolchain, `pkg-config`
+and system audio/input headers on Linux:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install libasound2-dev libudev-dev pkg-config
+
+# Fedora/RHEL
+sudo dnf install alsa-lib-devel systemd-devel pkgconf-pkg-config
+```
+
+Then `pip install .` (or `uv sync` + `maturin develop` for development).
+
 ## Quick Start
 
 ```python
@@ -123,17 +141,37 @@ pgfx.light_draw(torch, player_x, player_y)
 
 ---
 
+## Notes
+
+**Draw order.** Everything is drawn back-to-front by `z` (default 0, higher =
+on top). Within the same `z`, sprites keep their call order; lights and
+particles are drawn after sprites of the same `z`, and text is currently
+always rendered on top of everything.
+
+**`clear(color)`** sets the frame's background color (the last call wins) —
+it does not erase what was already drawn this frame.
+
+**Threading.** Call the pgfx API from the main thread only (`init`/`run` is an
+OS requirement). Background `threading.Thread`s keep running during the game
+loop — use them for pure Python work (networking, file I/O) and hand results
+to `update` via `queue.Queue`. `multiprocessing` cannot be used with pgfx
+objects: resource IDs are process-local.
+
+**Audio latency.** The default audio buffer follows the output device. If you
+get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
+300 ms at 48 kHz) before starting.
+
 ## API Reference
 
 ### System (7)
 
 | Function | Description |
 |----------|-------------|
-| `init(width, height, title, **opts)` | Initialize window. Options: `vsync`, `fullscreen`, `resizable`, `fixed_dt` |
-| `run(update_fn, render_fn)` | Start game loop. `update_fn(dt)` returns `False` to quit |
+| `init(width, height, title, **opts)` | Initialize window. Options: `fullscreen`, `resizable`, `fps_limit` (frames per second cap, `0` = uncapped; VSync is always on) |
+| `run(update_fn, render_fn, on_ready=None)` | Start game loop. `update_fn(dt)` returns `False` to quit; `on_ready()` is called once when the GPU is initialized. Exceptions raised in callbacks propagate out of `run()` |
 | `quit()` | Exit game loop |
 | `dt()` | Delta time in seconds |
-| `fps()` | Current FPS |
+| `fps()` | Current FPS (averaged over ~0.5s) |
 | `time()` | Time since init |
 | `screen_size()` | Returns `(width, height)` |
 
@@ -147,7 +185,7 @@ pgfx.light_draw(torch, player_x, player_y)
 | `mouse_pos()` | Returns `(x, y)` |
 | `mouse_down(btn)` | Button is held |
 | `mouse_pressed(btn)` | Button just pressed |
-| `mouse_wheel()` | Wheel delta (-1, 0, 1) |
+| `mouse_wheel()` | Wheel delta this frame (float; fractional for touchpads) |
 | `gamepad_connected(idx=0)` | Gamepad connected |
 | `gamepad_button(idx, btn)` | Button pressed |
 | `gamepad_axis(idx, axis)` | Axis value (-1 to 1) |
@@ -187,9 +225,9 @@ pgfx.light_draw(torch, player_x, player_y)
 
 | Function | Description |
 |----------|-------------|
-| `font_load(path, size)` | Load TTF font |
+| `font_load(path, size, smooth=True)` | Load TTF font. `smooth=False` gives pixel-perfect rendering |
 | `font_free(font)` | Free font |
-| `text(font, string, x, y, color)` | Draw text |
+| `text(font, string, x, y, color)` | Draw text (ASCII only for now; always on top of sprites) |
 
 ### Audio (12)
 
@@ -197,7 +235,7 @@ pgfx.light_draw(torch, player_x, player_y)
 |----------|-------------|
 | `sound_load(path)` | Load sound (WAV, OGG) |
 | `sound_free(snd)` | Free sound |
-| `sound_play(snd, volume=1, pan=0, loop=False)` | Play sound |
+| `sound_play(snd, volume=1, pan=0, loop=False)` | Play sound. `pan` is -1 (left) to 1 (right); non-zero pan mixes the source to mono |
 | `sound_stop(snd)` | Stop sound |
 | `music_load(path)` | Load music |
 | `music_free(mus)` | Free music |
@@ -205,8 +243,8 @@ pgfx.light_draw(torch, player_x, player_y)
 | `music_stop(mus)` | Stop music |
 | `music_pause(mus)` | Pause music |
 | `music_resume(mus)` | Resume music |
-| `set_master_volume(vol)` | Set master volume (0-1) |
-| `set_music_volume(vol)` | Set music volume (0-1) |
+| `set_master_volume(vol)` | Set master volume (0-1), applies to already-playing audio |
+| `set_music_volume(vol)` | Set music volume (0-1), applies to the current track |
 
 ### Collision (9)
 
@@ -260,7 +298,7 @@ pgfx.light_draw(torch, player_x, player_y)
 
 **Mouse:** `MOUSE_LEFT`, `MOUSE_RIGHT`, `MOUSE_MIDDLE`
 
-**Gamepad buttons:** `GAMEPAD_A`, `GAMEPAD_B`, `GAMEPAD_X`, `GAMEPAD_Y`, `GAMEPAD_LB`, `GAMEPAD_RB`, `GAMEPAD_BACK`, `GAMEPAD_START`, `GAMEPAD_GUIDE`, `GAMEPAD_LSTICK`, `GAMEPAD_RSTICK`, `GAMEPAD_DPAD_UP`, `GAMEPAD_DPAD_DOWN`, `GAMEPAD_DPAD_LEFT`, `GAMEPAD_DPAD_RIGHT`
+**Gamepad buttons:** `GAMEPAD_A`, `GAMEPAD_B`, `GAMEPAD_X`, `GAMEPAD_Y`, `GAMEPAD_LB`, `GAMEPAD_RB`, `GAMEPAD_LT`, `GAMEPAD_RT`, `GAMEPAD_BACK`, `GAMEPAD_START`, `GAMEPAD_GUIDE`, `GAMEPAD_LSTICK`, `GAMEPAD_RSTICK`, `GAMEPAD_DPAD_UP`, `GAMEPAD_DPAD_DOWN`, `GAMEPAD_DPAD_LEFT`, `GAMEPAD_DPAD_RIGHT`
 
 **Gamepad axes:** `GAMEPAD_AXIS_LX`, `GAMEPAD_AXIS_LY`, `GAMEPAD_AXIS_RX`, `GAMEPAD_AXIS_RY`
 
