@@ -160,6 +160,13 @@ objects: resource IDs are process-local.
 get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 300 ms at 48 kHz) before starting.
 
+**Lighting.** `set_ambient` darkens the whole frame to the given color and
+`light_draw` adds light on top: lights are accumulated additively into a
+lightmap which then multiplies the rendered frame. Lighting applies to
+everything drawn that frame (including text/HUD) regardless of `z`; when the
+ambient color is white and no lights are drawn, the lighting passes are
+skipped entirely.
+
 ## API Reference
 
 ### System (7)
@@ -281,7 +288,7 @@ get crackling audio (VMs, CI), set `PGFX_AUDIO_BUFFER=14400` (frames; 14400 ≈
 
 | Function | Description |
 |----------|-------------|
-| `set_ambient(color)` | Set ambient light |
+| `set_ambient(color)` | Set ambient light (darkens the whole frame; white = lighting off) |
 | `light_create(radius, color)` | Create light |
 | `light_set_color(light, color)` | Change color |
 | `light_set_intensity(light, intensity)` | Set intensity (0-1) |

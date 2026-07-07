@@ -44,6 +44,23 @@ fn create_projection_matrix(width: f32, height: f32) -> glam::Mat4 {
     glam::Mat4::orthographic_rh(0.0, width, height, 0.0, -1.0, 1.0)
 }
 
+/// Convert an sRGB-encoded channel (0.0-1.0) to linear.
+/// User-facing colors are sRGB (what you'd pick in an image editor); the GPU
+/// blends and outputs in linear space, so every color entering a vertex or a
+/// clear value must be linearized exactly once. Alpha stays linear (coverage).
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Convert an 8-bit sRGB channel to linear f32
+fn srgb8_to_linear(c: u8) -> f32 {
+    srgb_to_linear(c as f32 / 255.0)
+}
+
 /// Initialize GPU resources (instance, surface, device, queue, surface_config)
 ///
 /// This function handles the 'static lifetime requirement for wgpu::Surface by using
@@ -248,8 +265,9 @@ fn generate_sprite_vertices(
     let (v0, v1) = if cmd.flip_y { (v1, v0) } else { (v0, v1) };
 
     // Calculate color with alpha (use override if provided, e.g. for particles).
-    // Vertex colors are straight-alpha: premultiplication happens exactly once,
-    // in the fragment shader (shaders/sprite.wgsl).
+    // Vertex colors are straight-alpha and linear: RGB is linearized here
+    // (inputs are sRGB), premultiplication happens exactly once in the
+    // fragment shader (shaders/sprite.wgsl).
     let base_color = cmd.color_override.unwrap_or([
         sprite.color[0] as f32 / 255.0,
         sprite.color[1] as f32 / 255.0,
@@ -257,7 +275,12 @@ fn generate_sprite_vertices(
         sprite.color[3] as f32 / 255.0,
     ]);
     let alpha = base_color[3] * cmd.alpha;
-    let color = [base_color[0], base_color[1], base_color[2], alpha];
+    let color = [
+        srgb_to_linear(base_color[0]),
+        srgb_to_linear(base_color[1]),
+        srgb_to_linear(base_color[2]),
+        alpha,
+    ];
 
     // Create 6 vertices (2 triangles)
     // Triangle 1: top-left, top-right, bottom-left
@@ -305,12 +328,12 @@ fn generate_text_vertices(
     cmd: &TextDrawCommand,
     out: &mut Vec<SpriteVertex>,
 ) {
-    // Straight-alpha vertex color; the shader premultiplies once
+    // Straight-alpha linear vertex color; the shader premultiplies once
     let alpha = cmd.color[3] as f32 / 255.0;
     let color = [
-        cmd.color[0] as f32 / 255.0,
-        cmd.color[1] as f32 / 255.0,
-        cmd.color[2] as f32 / 255.0,
+        srgb8_to_linear(cmd.color[0]),
+        srgb8_to_linear(cmd.color[1]),
+        srgb8_to_linear(cmd.color[2]),
         alpha,
     ];
 
@@ -536,6 +559,190 @@ pub fn create_sprite_pipeline(
     ))
 }
 
+/// Format of the offscreen lightmap: linear (non-sRGB) accumulation buffer
+pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// Close the current batch and start one for the given texture
+fn switch_batch(
+    batches: &mut Vec<(u32, u32, u32)>,
+    current_texture_id: &mut Option<u32>,
+    batch_start: &mut u32,
+    vertices_len: u32,
+    texture_id: u32,
+) {
+    if *current_texture_id != Some(texture_id) {
+        if let Some(tex_id) = *current_texture_id {
+            let count = vertices_len - *batch_start;
+            if count > 0 {
+                batches.push((tex_id, *batch_start, count));
+            }
+        }
+        *current_texture_id = Some(texture_id);
+        *batch_start = vertices_len;
+    }
+}
+
+/// Create the two lighting pipelines:
+/// - light pipeline: sprite shader rendering additively into the lightmap
+/// - multiply pipeline: fullscreen pass multiplying the surface by the lightmap
+///
+/// Returns (light_pipeline, multiply_pipeline, multiply_bind_group_layout, lightmap_sampler).
+pub fn create_lighting_pipelines(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    projection_bind_group_layout: &wgpu::BindGroupLayout,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
+) -> (
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::BindGroupLayout,
+    wgpu::Sampler,
+) {
+    // Light pipeline: same sprite shader/vertex layout, additive blending,
+    // rendering into the (linear) lightmap texture
+    let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Sprite Shader (lights)"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sprite.wgsl").into()),
+    });
+
+    let light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Light Pipeline Layout"),
+        bind_group_layouts: &[projection_bind_group_layout, texture_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let additive = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+
+    let light_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Light Render Pipeline"),
+        layout: Some(&light_layout),
+        vertex: wgpu::VertexState {
+            module: &sprite_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[SpriteVertex::desc()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &sprite_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: LIGHTMAP_FORMAT,
+                blend: Some(additive),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    // Multiply pipeline: fullscreen triangle, scene *= lightmap
+    let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Lightmap Multiply Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/lightmap.wgsl").into()),
+    });
+
+    let multiply_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Lightmap Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+    let multiply_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Lightmap Multiply Pipeline Layout"),
+        bind_group_layouts: &[&multiply_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let multiply = wgpu::BlendState {
+        // final = dst (scene) * src (lightmap); blending on an sRGB surface
+        // happens in linear space, so the multiply is gamma-correct
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Dst,
+            dst_factor: wgpu::BlendFactor::Zero,
+            operation: wgpu::BlendOperation::Add,
+        },
+        // keep the destination alpha
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+
+    let multiply_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Lightmap Multiply Pipeline"),
+        layout: Some(&multiply_layout),
+        vertex: wgpu::VertexState {
+            module: &blit_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &blit_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(multiply),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    (
+        light_pipeline,
+        multiply_pipeline,
+        multiply_bind_group_layout,
+        lightmap_sampler,
+    )
+}
+
 // Debug timing flag - set to true to print timing info
 const DEBUG_TIMING: bool = false;
 
@@ -575,8 +782,9 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
         a: 1.0,
     };
     let mut items: Vec<DrawItem> = Vec::with_capacity(commands.len());
-    // light: (light_id, x, y, z, seq) — expanded to sprites once engine data is available
-    let mut light_draws: Vec<(u32, f32, f32, i32, u32)> = Vec::new();
+    // light: (light_id, x, y) — rendered additively into the lightmap,
+    // so their draw order (and z) is irrelevant
+    let mut light_draws: Vec<(u32, f32, f32)> = Vec::new();
     // particles: (ps_id, z, seq)
     let mut particle_draws: Vec<(u32, i32, u32)> = Vec::new();
 
@@ -599,11 +807,11 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let b = tuple.get_item(3)?.extract::<u8>().unwrap_or(0);
                                 let a = tuple.get_item(4)?.extract::<u8>().unwrap_or(255);
 
-                                // Convert 0-255 to 0.0-1.0
+                                // sRGB input -> linear clear value (sRGB surface)
                                 clear_color = wgpu::Color {
-                                    r: r as f64 / 255.0,
-                                    g: g as f64 / 255.0,
-                                    b: b as f64 / 255.0,
+                                    r: srgb8_to_linear(r) as f64,
+                                    g: srgb8_to_linear(g) as f64,
+                                    b: srgb8_to_linear(b) as f64,
                                     a: a as f64 / 255.0,
                                 };
                             }
@@ -778,13 +986,13 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             }
 
                             CMD_LIGHT_DRAW => {
-                                // (CMD_LIGHT_DRAW, light_id, x, y, z)
+                                // (CMD_LIGHT_DRAW, light_id, x, y, z) — z ignored:
+                                // lights are additive and order-independent
                                 let light_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let x = tuple.get_item(2)?.extract::<f32>()?;
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
-                                let z = tuple.get_item(4)?.extract::<i32>()?;
 
-                                light_draws.push((light_id, x, y, z, seq));
+                                light_draws.push((light_id, x, y));
                             }
 
                             CMD_PARTICLES_RENDER => {
@@ -808,10 +1016,11 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
     // Perform rendering with engine's GPU resources
     crate::engine::with_engine(|engine| {
-        // Expand light draws into sprite commands (need engine.lights access);
-        // they keep the seq of their original command for correct ordering
+        // Expand light draws into soft-circle quads for the additive lightmap
+        // pass (they do not participate in the scene's z/call ordering)
         let time = engine.start_time.elapsed().as_secs_f32();
-        for (light_id, x, y, z, seq) in light_draws {
+        let mut light_cmds: Vec<SpriteDrawCommand> = Vec::new();
+        for (light_id, x, y) in light_draws {
             if let Some(light) = engine.lights.get(light_id) {
                 // Calculate effective intensity with flicker
                 let mut intensity = light.intensity;
@@ -821,7 +1030,6 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     intensity *= 1.0 - flicker;
                 }
 
-                // Render light as a soft circle sprite
                 let diameter = light.radius * 2.0;
                 let color = [
                     light.color[0] as f32 / 255.0,
@@ -830,7 +1038,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     intensity,
                 ];
 
-                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                light_cmds.push(SpriteDrawCommand {
                     sprite_id: circle_soft_sprite,
                     x,
                     y,
@@ -839,11 +1047,11 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     alpha: 1.0,
                     flip_x: false,
                     flip_y: false,
-                    z,
-                    seq,
+                    z: 0,
+                    seq: 0,
                     color_override: Some(color),
                     size_override: None,
-                }));
+                });
             }
         }
 
@@ -928,6 +1136,12 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             }
         }
 
+        // Lighting is active when there is a light to draw or a non-white
+        // ambient; otherwise both extra passes are skipped entirely
+        let ambient = engine.lighting.ambient;
+        let lighting_active =
+            !light_cmds.is_empty() || ambient[0] < 1.0 || ambient[1] < 1.0 || ambient[2] < 1.0;
+
         // Now get GPU resources (immutable borrows)
         let surface = engine
             .surface
@@ -944,6 +1158,52 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
         let surface_config = engine.surface_config.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Surface config not initialized")
         })?;
+
+        // (Re)create the lightmap on first use or after a resize
+        if lighting_active {
+            let (sw, sh) = (surface_config.width, surface_config.height);
+            if engine.lightmap_texture.is_none() || engine.lightmap_size != (sw, sh) {
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Lightmap"),
+                    size: wgpu::Extent3d {
+                        width: sw,
+                        height: sh,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: LIGHTMAP_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let lightmap_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                if let (Some(layout), Some(sampler)) = (
+                    engine.multiply_bind_group_layout.as_ref(),
+                    engine.lightmap_sampler.as_ref(),
+                ) {
+                    engine.multiply_bind_group =
+                        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("Lightmap Multiply Bind Group"),
+                            layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(&lightmap_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(sampler),
+                                },
+                            ],
+                        }));
+                }
+                engine.lightmap_texture = Some(texture);
+                engine.lightmap_view = Some(lightmap_view);
+                engine.lightmap_size = (sw, sh);
+            }
+        }
 
         // Get surface texture
         let output = surface.get_current_texture().map_err(|e| {
@@ -963,7 +1223,240 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             label: Some("Render Encoder"),
         });
 
-        // Begin render pass
+        let t_sprite_start = Instant::now();
+
+        // ---- Geometry: scene items and light quads share one vertex buffer ----
+        let mut all_vertices: Vec<SpriteVertex> =
+            Vec::with_capacity((items.len() + light_cmds.len()) * 6);
+        let mut batches: Vec<(u32, u32, u32)> = Vec::new(); // (texture_id, start, count)
+
+        // One unified sort: back-to-front by z, call order within a z.
+        // Batching works for consecutive items with the same texture.
+        items.sort_by_key(|item| item.order_key());
+
+        let mut current_texture_id: Option<u32> = None;
+        let mut batch_start = 0u32;
+
+        for item in &items {
+            match item {
+                DrawItem::Sprite(cmd) => {
+                    let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Invalid sprite ID: {}",
+                            cmd.sprite_id
+                        ))
+                    })?;
+
+                    let texture_size = engine
+                        .textures
+                        .get(sprite.texture_id)
+                        .map(|t| t.size)
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Invalid texture ID: {}",
+                                sprite.texture_id
+                            ))
+                        })?;
+
+                    switch_batch(
+                        &mut batches,
+                        &mut current_texture_id,
+                        &mut batch_start,
+                        all_vertices.len() as u32,
+                        sprite.texture_id,
+                    );
+
+                    let verts = generate_sprite_vertices(sprite, texture_size, cmd);
+                    all_vertices.extend_from_slice(&verts);
+                }
+                DrawItem::Text(cmd) => {
+                    let font = match engine.fonts.get(cmd.font_id) {
+                        Some(f) => f,
+                        None => continue,
+                    };
+                    let atlas_size = match engine.textures.get(font.atlas_texture_id) {
+                        Some(t) => t.size,
+                        None => continue,
+                    };
+
+                    switch_batch(
+                        &mut batches,
+                        &mut current_texture_id,
+                        &mut batch_start,
+                        all_vertices.len() as u32,
+                        font.atlas_texture_id,
+                    );
+
+                    generate_text_vertices(font, atlas_size, cmd, &mut all_vertices);
+                }
+            }
+        }
+
+        // Save the last batch
+        if let Some(tex_id) = current_texture_id {
+            let count = all_vertices.len() as u32 - batch_start;
+            if count > 0 {
+                batches.push((tex_id, batch_start, count));
+            }
+        }
+
+        // Light quads go after the scene vertices; they all use the soft
+        // circle texture, so they form a single draw range
+        let mut light_range: Option<(u32, u32, u32)> = None; // (texture_id, start, count)
+        if lighting_active && !light_cmds.is_empty() {
+            let light_start = all_vertices.len() as u32;
+            let mut light_texture_id = None;
+            for cmd in &light_cmds {
+                let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Light sprite missing")
+                })?;
+                let texture_size = engine
+                    .textures
+                    .get(sprite.texture_id)
+                    .map(|t| t.size)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err("Light texture missing")
+                    })?;
+                light_texture_id = Some(sprite.texture_id);
+                let verts = generate_sprite_vertices(sprite, texture_size, cmd);
+                all_vertices.extend_from_slice(&verts);
+            }
+            if let Some(tex_id) = light_texture_id {
+                light_range = Some((tex_id, light_start, all_vertices.len() as u32 - light_start));
+            }
+        }
+
+        // Create or reuse the shared vertex buffer
+        let total_vertices = all_vertices.len();
+        if total_vertices > 0 {
+            let needs_new_buffer = engine.sprite_vertex_buffer.is_none()
+                || engine.sprite_vertex_buffer_capacity < total_vertices;
+
+            if needs_new_buffer {
+                // Create new buffer with some extra capacity
+                let new_capacity = (total_vertices * 2).max(1024);
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Sprite Vertex Buffer"),
+                    size: (new_capacity * std::mem::size_of::<SpriteVertex>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                engine.sprite_vertex_buffer = Some(buffer);
+                engine.sprite_vertex_buffer_capacity = new_capacity;
+            }
+
+            let t_vertex_gen = t_sprite_start.elapsed();
+
+            // Write vertices to buffer
+            let vertex_buffer = engine.sprite_vertex_buffer.as_ref().unwrap();
+            queue.write_buffer(vertex_buffer, 0, bytemuck::cast_slice(&all_vertices));
+
+            let t_buffer_write = t_sprite_start.elapsed();
+
+            if DEBUG_TIMING && items_count > 100 {
+                static FRAME_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let frame = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if frame.is_multiple_of(60) {
+                    println!(
+                        "TIMING: parse={:.2}ms, vertex_gen={:.2}ms, buf_write={:.2}ms, items={}",
+                        t_parse.as_secs_f64() * 1000.0,
+                        t_vertex_gen.as_secs_f64() * 1000.0,
+                        (t_buffer_write - t_vertex_gen).as_secs_f64() * 1000.0,
+                        items_count
+                    );
+                }
+            }
+        }
+
+        // Projection bind group (shared by the scene and light passes)
+        let projection_bind_group = if total_vertices > 0 {
+            let sprite_bind_group_layout =
+                engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "Sprite bind group layout not initialized",
+                    )
+                })?;
+            let sprite_projection_buffer =
+                engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "Sprite projection buffer not initialized",
+                    )
+                })?;
+
+            let projection =
+                create_projection_matrix(surface_config.width as f32, surface_config.height as f32);
+            queue.write_buffer(
+                sprite_projection_buffer,
+                0,
+                bytemuck::cast_slice(projection.as_ref()),
+            );
+
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Sprite Projection Bind Group"),
+                layout: sprite_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sprite_projection_buffer.as_entire_binding(),
+                }],
+            }))
+        } else {
+            None
+        };
+
+        // ---- Pass 1: lights -> lightmap (cleared to the ambient color) ----
+        if lighting_active {
+            let lightmap_view = engine.lightmap_view.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Lightmap not initialized")
+            })?;
+
+            let mut light_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Lightmap Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: lightmap_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: srgb_to_linear(ambient[0]) as f64,
+                            g: srgb_to_linear(ambient[1]) as f64,
+                            b: srgb_to_linear(ambient[2]) as f64,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            if let (Some((tex_id, start, count)), Some(projection_bind_group)) =
+                (light_range, projection_bind_group.as_ref())
+            {
+                let light_pipeline = engine.light_pipeline.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Light pipeline not initialized")
+                })?;
+                let bind_group = engine
+                    .textures
+                    .get(tex_id)
+                    .and_then(|t| t.bind_group.as_ref())
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            "Light texture bind group not initialized",
+                        )
+                    })?;
+                let vertex_buffer = engine.sprite_vertex_buffer.as_ref().unwrap();
+
+                light_pass.set_pipeline(light_pipeline);
+                light_pass.set_bind_group(0, projection_bind_group, &[]);
+                light_pass.set_bind_group(1, bind_group, &[]);
+                light_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                light_pass.draw(start..start + count, 0..1);
+            }
+        }
+
+        // ---- Pass 2: scene -> surface ----
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -981,210 +1474,65 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 timestamp_writes: None,
             });
 
-            // Render sprites, primitives and text (all through sprite pipeline)
-            if !items.is_empty() {
-                // Get sprite pipeline
+            if let (false, Some(projection_bind_group)) =
+                (batches.is_empty(), projection_bind_group.as_ref())
+            {
                 let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
                 })?;
-                let sprite_bind_group_layout =
-                    engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(
-                            "Sprite bind group layout not initialized",
-                        )
-                    })?;
-                let sprite_projection_buffer =
-                    engine.sprite_projection_buffer.as_ref().ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(
-                            "Sprite projection buffer not initialized",
-                        )
-                    })?;
+                let vertex_buffer = engine.sprite_vertex_buffer.as_ref().unwrap();
 
-                // Update projection matrix
-                let projection = create_projection_matrix(
-                    surface_config.width as f32,
-                    surface_config.height as f32,
-                );
-                queue.write_buffer(
-                    sprite_projection_buffer,
-                    0,
-                    bytemuck::cast_slice(projection.as_ref()),
-                );
+                render_pass.set_pipeline(sprite_pipeline);
+                render_pass.set_bind_group(0, projection_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
-                // Create projection bind group
-                let projection_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Sprite Projection Bind Group"),
-                    layout: sprite_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: sprite_projection_buffer.as_entire_binding(),
-                    }],
-                });
-
-                let t_sprite_start = Instant::now();
-
-                // Group consecutive same-texture draws into batches
-                let mut all_vertices: Vec<SpriteVertex> = Vec::with_capacity(items.len() * 6);
-                let mut batches: Vec<(u32, u32, u32)> = Vec::new(); // (texture_id, start, count)
-
-                // One unified sort: back-to-front by z, call order within a z.
-                // Batching works for consecutive items with the same texture.
-                items.sort_by_key(|item| item.order_key());
-
-                let mut current_texture_id: Option<u32> = None;
-                let mut batch_start = 0u32;
-
-                // Close the current batch and start one for the given texture
-                fn switch_batch(
-                    batches: &mut Vec<(u32, u32, u32)>,
-                    current_texture_id: &mut Option<u32>,
-                    batch_start: &mut u32,
-                    vertices_len: u32,
-                    texture_id: u32,
-                ) {
-                    if *current_texture_id != Some(texture_id) {
-                        if let Some(tex_id) = *current_texture_id {
-                            let count = vertices_len - *batch_start;
-                            if count > 0 {
-                                batches.push((tex_id, *batch_start, count));
-                            }
-                        }
-                        *current_texture_id = Some(texture_id);
-                        *batch_start = vertices_len;
-                    }
-                }
-
-                for item in &items {
-                    match item {
-                        DrawItem::Sprite(cmd) => {
-                            let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
-                                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                    "Invalid sprite ID: {}",
-                                    cmd.sprite_id
-                                ))
-                            })?;
-
-                            let texture_size = engine
-                                .textures
-                                .get(sprite.texture_id)
-                                .map(|t| t.size)
-                                .ok_or_else(|| {
-                                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                        "Invalid texture ID: {}",
-                                        sprite.texture_id
-                                    ))
-                                })?;
-
-                            switch_batch(
-                                &mut batches,
-                                &mut current_texture_id,
-                                &mut batch_start,
-                                all_vertices.len() as u32,
-                                sprite.texture_id,
-                            );
-
-                            let verts = generate_sprite_vertices(sprite, texture_size, cmd);
-                            all_vertices.extend_from_slice(&verts);
-                        }
-                        DrawItem::Text(cmd) => {
-                            let font = match engine.fonts.get(cmd.font_id) {
-                                Some(f) => f,
-                                None => continue,
-                            };
-                            let atlas_size = match engine.textures.get(font.atlas_texture_id) {
-                                Some(t) => t.size,
-                                None => continue,
-                            };
-
-                            switch_batch(
-                                &mut batches,
-                                &mut current_texture_id,
-                                &mut batch_start,
-                                all_vertices.len() as u32,
-                                font.atlas_texture_id,
-                            );
-
-                            generate_text_vertices(font, atlas_size, cmd, &mut all_vertices);
-                        }
-                    }
-                }
-
-                // Save the last batch
-                if let Some(tex_id) = current_texture_id {
-                    let count = all_vertices.len() as u32 - batch_start;
-                    if count > 0 {
-                        batches.push((tex_id, batch_start, count));
-                    }
-                }
-
-                // Create or reuse vertex buffer
-                let total_vertices = all_vertices.len();
-                if total_vertices > 0 {
-                    let needs_new_buffer = engine.sprite_vertex_buffer.is_none()
-                        || engine.sprite_vertex_buffer_capacity < total_vertices;
-
-                    if needs_new_buffer {
-                        // Create new buffer with some extra capacity
-                        let new_capacity = (total_vertices * 2).max(1024);
-                        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("Sprite Vertex Buffer"),
-                            size: (new_capacity * std::mem::size_of::<SpriteVertex>()) as u64,
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                        engine.sprite_vertex_buffer = Some(buffer);
-                        engine.sprite_vertex_buffer_capacity = new_capacity;
-                    }
-
-                    let t_vertex_gen = t_sprite_start.elapsed();
-
-                    // Write vertices to buffer
-                    let vertex_buffer = engine.sprite_vertex_buffer.as_ref().unwrap();
-                    queue.write_buffer(vertex_buffer, 0, bytemuck::cast_slice(&all_vertices));
-
-                    let t_buffer_write = t_sprite_start.elapsed();
-
-                    if DEBUG_TIMING && items_count > 100 {
-                        static FRAME_COUNT: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let frame = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if frame.is_multiple_of(60) {
-                            println!("TIMING: parse={:.2}ms, vertex_gen={:.2}ms, buf_write={:.2}ms, items={}",
-                                t_parse.as_secs_f64() * 1000.0,
-                                t_vertex_gen.as_secs_f64() * 1000.0,
-                                (t_buffer_write - t_vertex_gen).as_secs_f64() * 1000.0,
-                                items_count);
-                        }
-                    }
-
-                    // Render all batches
-                    render_pass.set_pipeline(sprite_pipeline);
-                    render_pass.set_bind_group(0, &projection_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-
-                    for (texture_id, start, count) in batches {
-                        // Get texture with cached bind group
-                        let texture = engine.textures.get(texture_id).ok_or_else(|| {
+                for &(texture_id, start, count) in &batches {
+                    // Use the texture's cached bind group
+                    let bind_group = engine
+                        .textures
+                        .get(texture_id)
+                        .and_then(|t| t.bind_group.as_ref())
+                        .ok_or_else(|| {
                             pyo3::exceptions::PyRuntimeError::new_err(format!(
                                 "Invalid texture ID: {}",
                                 texture_id
                             ))
                         })?;
 
-                        // Use cached bind group
-                        let bind_group = texture.bind_group.as_ref().ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(
-                                "Texture bind group not initialized",
-                            )
-                        })?;
-
-                        render_pass.set_bind_group(1, bind_group, &[]);
-                        render_pass.draw(start..start + count, 0..1);
-                    }
+                    render_pass.set_bind_group(1, bind_group, &[]);
+                    render_pass.draw(start..start + count, 0..1);
                 }
             }
+        }
 
-            // Render pass ends here (when render_pass is dropped)
+        // ---- Pass 3: surface *= lightmap ----
+        if lighting_active {
+            let multiply_pipeline = engine.multiply_pipeline.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Multiply pipeline not initialized")
+            })?;
+            let multiply_bind_group = engine.multiply_bind_group.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Lightmap bind group not initialized")
+            })?;
+
+            let mut multiply_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Lightmap Multiply Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            multiply_pass.set_pipeline(multiply_pipeline);
+            multiply_pass.set_bind_group(0, multiply_bind_group, &[]);
+            multiply_pass.draw(0..3, 0..1);
         }
 
         // Submit commands to queue
@@ -1349,6 +1697,25 @@ mod tests {
             assert!((v.color[0] - 1.0).abs() < 1e-6);
             assert_eq!(v.color[1], 0.0);
             assert!((v.color[3] - a).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn vertex_colors_are_linearized() {
+        // Regression for the gamma bug: sRGB 128 must become linear ~0.2158,
+        // not 0.502; alpha stays linear (it's coverage, not color)
+        assert!((srgb_to_linear(128.0 / 255.0) - 0.2158).abs() < 1e-3);
+        assert_eq!(srgb_to_linear(0.0), 0.0);
+        assert!((srgb_to_linear(1.0) - 1.0).abs() < 1e-6);
+
+        let mut sprite = test_sprite();
+        sprite.color = [128, 128, 128, 128];
+        let cmd = test_cmd();
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        for v in &verts {
+            assert!((v.color[0] - 0.2158).abs() < 1e-3);
+            assert!((v.color[3] - 128.0 / 255.0).abs() < 1e-6); // alpha untouched
         }
     }
 

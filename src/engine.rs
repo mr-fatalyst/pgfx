@@ -63,6 +63,18 @@ pub struct Engine {
     pub(crate) sprite_vertex_buffer: Option<wgpu::Buffer>,
     pub(crate) sprite_vertex_buffer_capacity: usize, // in vertices
 
+    // Lighting: additive light pass into an offscreen lightmap, then a
+    // fullscreen multiply onto the scene. The lightmap matches the surface
+    // size and is (re)created on demand in render_batch.
+    pub(crate) light_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) multiply_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) multiply_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub(crate) multiply_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) lightmap_sampler: Option<wgpu::Sampler>,
+    pub(crate) lightmap_texture: Option<wgpu::Texture>,
+    pub(crate) lightmap_view: Option<wgpu::TextureView>,
+    pub(crate) lightmap_size: (u32, u32),
+
     // Resources
     pub(crate) textures: crate::resources::ResourcePool<crate::texture::Texture>,
     pub(crate) sprites: crate::resources::ResourcePool<crate::sprite::Sprite>,
@@ -113,6 +125,14 @@ impl Engine {
             sprite_projection_buffer: None,
             sprite_vertex_buffer: None,
             sprite_vertex_buffer_capacity: 0,
+            light_pipeline: None,
+            multiply_pipeline: None,
+            multiply_bind_group_layout: None,
+            multiply_bind_group: None,
+            lightmap_sampler: None,
+            lightmap_texture: None,
+            lightmap_view: None,
+            lightmap_size: (0, 0),
             textures: crate::resources::ResourcePool::new(),
             sprites: crate::resources::ResourcePool::new(),
             fonts: crate::resources::ResourcePool::new(),
@@ -364,6 +384,14 @@ impl ApplicationHandler for AppHandler {
                         }
                     };
 
+                    let (light_pipeline, multiply_pipeline, multiply_bgl, lightmap_sampler) =
+                        crate::renderer::create_lighting_pipelines(
+                            &device,
+                            surface_config.format,
+                            &sprite_bind_group_layout,
+                            &sprite_texture_bind_group_layout,
+                        );
+
                     with_engine(|engine| {
                         // Render initial black frame to clear garbage
                         if let Err(e) =
@@ -383,6 +411,10 @@ impl ApplicationHandler for AppHandler {
                         engine.sprite_texture_bind_group_layout =
                             Some(sprite_texture_bind_group_layout);
                         engine.sprite_projection_buffer = Some(sprite_projection_buffer);
+                        engine.light_pipeline = Some(light_pipeline);
+                        engine.multiply_pipeline = Some(multiply_pipeline);
+                        engine.multiply_bind_group_layout = Some(multiply_bgl);
+                        engine.lightmap_sampler = Some(lightmap_sampler);
                     })
                     .expect("Engine not initialized");
 
