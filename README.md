@@ -154,6 +154,14 @@ lights and particles — keep their call order.
 **`clear(color)`** sets the frame's background color (the last call wins) —
 it does not erase what was already drawn this frame.
 
+**Camera.** `set_view(x, y, zoom, rot)` applies to every draw call issued
+after it — sprites, primitives, text, particles and lights alike;
+`reset_view()` switches back to screen space (HUD). The view resets at the
+start of every frame, so call it in `render()` before drawing the world.
+Which view a draw uses is decided by call order, not by `z`. Input stays in
+screen space: converting `mouse_pos()` to world coordinates is up to you.
+See `examples/camera.py`.
+
 **Threading.** Call the pgfx API from the main thread only (`init`/`run` is an
 OS requirement). Background `threading.Thread`s keep running during the game
 loop — use them for pure Python work (networking, file I/O) and hand results
@@ -220,7 +228,7 @@ skipped entirely.
 | `sprite_set_color(spr, color)` | Set tint color |
 | `sprite_free(spr)` | Free sprite |
 
-### Drawing (6)
+### Drawing (8)
 
 | Function | Description |
 |----------|-------------|
@@ -230,6 +238,8 @@ skipped entirely.
 | `rect_fill(x, y, w, h, color)` | Draw rectangle |
 | `line(x1, y1, x2, y2, color, width=2)` | Draw line (centered on the segment) |
 | `circle_fill(x, y, r, color)` | Draw circle |
+| `set_view(x, y, zoom=1, rot=0)` | Camera: place world point `(x, y)` at the screen center for subsequent draws, zoomed and rotated around it |
+| `reset_view()` | Back to screen space — for HUD/UI |
 
 ### Text (3)
 

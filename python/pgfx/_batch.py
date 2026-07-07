@@ -12,6 +12,8 @@ CMD_CIRCLE_FILL = 5
 CMD_TEXT = 6
 CMD_PARTICLES_RENDER = 7
 CMD_LIGHT_DRAW = 8
+CMD_SET_VIEW = 9
+CMD_RESET_VIEW = 10
 
 # Command buffer
 _commands = []
@@ -68,3 +70,21 @@ def particles_render(ps, z=0):
 def light_draw(light, x, y, z=0):
     """Draw a light at position."""
     _commands.append((CMD_LIGHT_DRAW, light, x, y, z))
+
+
+def set_view(x, y, zoom=1.0, rot=0.0):
+    """Camera: place world point (x, y) at the screen center for all
+    subsequent draw calls, zoomed and rotated around it.
+
+    Resets to screen space at the start of every frame — call it in render()
+    before drawing the world. Applies per call (z-sorting does not change
+    which view a draw uses).
+    """
+    if zoom <= 0:
+        raise ValueError(f"zoom must be positive, got {zoom}")
+    _commands.append((CMD_SET_VIEW, float(x), float(y), float(zoom), float(rot)))
+
+
+def reset_view():
+    """Back to screen space (identity view) — call before drawing the HUD."""
+    _commands.append((CMD_RESET_VIEW,))

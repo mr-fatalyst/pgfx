@@ -78,3 +78,26 @@ def test_call_order_is_preserved(clean_commands):
     pgfx.text(2, "x", 0, 0, pgfx.WHITE)
     types = [cmd[0] for cmd in commands()]
     assert types == [_batch.CMD_CLEAR, _batch.CMD_DRAW, _batch.CMD_TEXT]
+
+
+def test_set_view_defaults(clean_commands):
+    pgfx.set_view(10, 20)
+    assert commands() == [(_batch.CMD_SET_VIEW, 10.0, 20.0, 1.0, 0.0)]
+
+
+def test_set_view_full(clean_commands):
+    pgfx.set_view(100, 200, zoom=2.0, rot=0.5)
+    assert commands() == [(_batch.CMD_SET_VIEW, 100.0, 200.0, 2.0, 0.5)]
+
+
+def test_set_view_rejects_non_positive_zoom(clean_commands):
+    import pytest
+
+    with pytest.raises(ValueError, match="zoom"):
+        pgfx.set_view(0, 0, zoom=0)
+    assert commands() == []
+
+
+def test_reset_view(clean_commands):
+    pgfx.reset_view()
+    assert commands() == [(_batch.CMD_RESET_VIEW,)]

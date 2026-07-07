@@ -12,6 +12,33 @@ pub const CMD_CIRCLE_FILL: u8 = 5;
 pub const CMD_TEXT: u8 = 6;
 pub const CMD_PARTICLES_RENDER: u8 = 7;
 pub const CMD_LIGHT_DRAW: u8 = 8;
+pub const CMD_SET_VIEW: u8 = 9;
+pub const CMD_RESET_VIEW: u8 = 10;
+
+/// 2D affine view transform: screen = (a*x + c*y + tx, b*x + d*y + ty),
+/// stored as [a, b, c, d, tx, ty]. `None` on a command means identity
+/// (screen space).
+type View = [f32; 6];
+
+/// Build the view that places world point (cx, cy) at the screen center,
+/// zoomed and rotated around it. Screen size is in logical pixels.
+fn make_view(cx: f32, cy: f32, zoom: f32, rot: f32, screen_w: f32, screen_h: f32) -> View {
+    let (sin, cos) = rot.sin_cos();
+    let (a, b, c, d) = (zoom * cos, zoom * sin, -zoom * sin, zoom * cos);
+    [
+        a,
+        b,
+        c,
+        d,
+        screen_w / 2.0 - (a * cx + c * cy),
+        screen_h / 2.0 - (b * cx + d * cy),
+    ]
+}
+
+#[inline]
+fn view_apply(v: &View, x: f32, y: f32) -> [f32; 2] {
+    [v[0] * x + v[2] * y + v[4], v[1] * x + v[3] * y + v[5]]
+}
 
 /// Vertex structure for sprite rendering
 #[repr(C)]
@@ -170,6 +197,7 @@ struct SpriteDrawCommand {
     seq: u32,                          // Position in the frame's command list (call order)
     color_override: Option<[f32; 4]>,  // Override sprite color (for particles/primitives)
     size_override: Option<(f32, f32)>, // Override size (w, h) for primitives
+    view: Option<View>,                // View transform active when the call was issued
 }
 
 /// Text draw command (parsed from Python)
@@ -182,6 +210,7 @@ struct TextDrawCommand {
     color: [u8; 4],
     z: i32,
     seq: u32,
+    view: Option<View>,
 }
 
 /// A single draw command in the unified stream. Everything is sorted by
@@ -235,7 +264,7 @@ fn generate_sprite_vertices(
     let cos = cmd.rot.cos();
     let sin = cmd.rot.sin();
 
-    let rotated_corners: [[f32; 2]; 4] = [
+    let mut rotated_corners: [[f32; 2]; 4] = [
         [
             cmd.x + corners[0].0 * cos - corners[0].1 * sin,
             cmd.y + corners[0].0 * sin + corners[0].1 * cos,
@@ -253,6 +282,13 @@ fn generate_sprite_vertices(
             cmd.y + corners[3].0 * sin + corners[3].1 * cos,
         ],
     ];
+
+    // Apply the view transform (camera) captured at call time
+    if let Some(v) = &cmd.view {
+        for corner in &mut rotated_corners {
+            *corner = view_apply(v, corner[0], corner[1]);
+        }
+    }
 
     // Calculate UV coordinates
     let u0 = region_x as f32 / tex_w as f32;
@@ -393,39 +429,49 @@ fn generate_text_vertices(
             let u1 = (rect_x + rect_w) as f32 / atlas_w;
             let v1 = (rect_y + rect_h) as f32 / atlas_h;
 
-            // Two triangles per glyph quad
+            // Two triangles per glyph quad, through the view transform
+            // (camera) captured at call time
             let x0 = glyph_x;
             let y0 = glyph_y;
             let x1 = glyph_x + rect_w as f32;
             let y1 = glyph_y + rect_h as f32;
+            let (p00, p10, p01, p11) = match &cmd.view {
+                Some(v) => (
+                    view_apply(v, x0, y0),
+                    view_apply(v, x1, y0),
+                    view_apply(v, x0, y1),
+                    view_apply(v, x1, y1),
+                ),
+                None => ([x0, y0], [x1, y0], [x0, y1], [x1, y1]),
+            };
 
             out.push(SpriteVertex {
-                position: [x0, y0],
+                position: p00,
                 tex_coords: [u0, v0],
                 color,
             });
             out.push(SpriteVertex {
-                position: [x1, y0],
+                position: p10,
                 tex_coords: [u1, v0],
                 color,
             });
             out.push(SpriteVertex {
-                position: [x0, y1],
+                position: p01,
                 tex_coords: [u0, v1],
                 color,
             });
             out.push(SpriteVertex {
-                position: [x1, y0],
+                position: p10,
                 tex_coords: [u1, v0],
                 color,
             });
             out.push(SpriteVertex {
-                position: [x1, y1],
+                position: p11,
                 tex_coords: [u1, v1],
                 color,
             });
             out.push(SpriteVertex {
-                position: [x0, y1],
+                position: p01,
                 tex_coords: [u0, v1],
                 color,
             });
@@ -752,8 +798,9 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
     use std::time::Instant;
     let t_start = Instant::now();
 
-    // Get primitive sprite IDs first (cached after first call)
-    let (white_pixel_sprite, circle_sprite, circle_soft_sprite) =
+    // Get primitive sprite IDs (cached after first call) and the logical
+    // screen size — set_view places the camera point at the screen center
+    let (white_pixel_sprite, circle_sprite, circle_soft_sprite, screen_w, screen_h) =
         crate::engine::with_engine(|engine| {
             let wp = engine
                 .get_or_create_primitive_sprite(crate::texture::PrimitiveType::WhitePixel)
@@ -770,7 +817,16 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 .ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Failed to create circle soft sprite")
                 })?;
-            PyResult::Ok((wp, c, cs))
+            let (sw, sh) = if let Some(config) = &engine.surface_config {
+                let scale = engine.scale_factor;
+                (
+                    (config.width as f64 / scale) as f32,
+                    (config.height as f64 / scale) as f32,
+                )
+            } else {
+                (engine.config.width as f32, engine.config.height as f32)
+            };
+            PyResult::Ok((wp, c, cs, sw, sh))
         })??;
 
     // Parse commands into one unified stream; each item carries its position
@@ -782,11 +838,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
         a: 1.0,
     };
     let mut items: Vec<DrawItem> = Vec::with_capacity(commands.len());
-    // light: (light_id, x, y) — rendered additively into the lightmap,
+    // light: (light_id, x, y, view) — rendered additively into the lightmap,
     // so their draw order (and z) is irrelevant
-    let mut light_draws: Vec<(u32, f32, f32)> = Vec::new();
-    // particles: (ps_id, z, seq)
-    let mut particle_draws: Vec<(u32, i32, u32)> = Vec::new();
+    let mut light_draws: Vec<(u32, f32, f32, Option<View>)> = Vec::new();
+    // particles: (ps_id, z, seq, view)
+    let mut particle_draws: Vec<(u32, i32, u32, Option<View>)> = Vec::new();
+    // The view (camera) applies to every draw command issued after set_view()
+    // and until reset_view(); each frame starts in screen space
+    let mut current_view: Option<View> = None;
 
     Python::attach(|py| {
         for (seq, cmd_obj) in commands.iter().enumerate() {
@@ -841,6 +900,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     seq,
                                     color_override: Some([r, g, b, a]),
                                     size_override: Some((w, h)),
+                                    view: current_view,
                                 }));
                             }
 
@@ -878,6 +938,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                         seq,
                                         color_override: Some([r, g, b, a]),
                                         size_override: Some((len, width)),
+                                        view: current_view,
                                     }));
                                 }
                             }
@@ -908,6 +969,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     seq,
                                     color_override: Some([r, g, b, a]),
                                     size_override: None,
+                                    view: current_view,
                                 }));
                             }
 
@@ -931,6 +993,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     seq,
                                     color_override: None,
                                     size_override: None,
+                                    view: current_view,
                                 }));
                             }
 
@@ -959,6 +1022,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     seq,
                                     color_override: None,
                                     size_override: None,
+                                    view: current_view,
                                 }));
                             }
 
@@ -982,6 +1046,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color: [r, g, b, a],
                                     z,
                                     seq,
+                                    view: current_view,
                                 }));
                             }
 
@@ -992,7 +1057,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let x = tuple.get_item(2)?.extract::<f32>()?;
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
 
-                                light_draws.push((light_id, x, y));
+                                light_draws.push((light_id, x, y, current_view));
                             }
 
                             CMD_PARTICLES_RENDER => {
@@ -1000,7 +1065,21 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let ps_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let z = tuple.get_item(2)?.extract::<i32>()?;
 
-                                particle_draws.push((ps_id, z, seq));
+                                particle_draws.push((ps_id, z, seq, current_view));
+                            }
+
+                            CMD_SET_VIEW => {
+                                // (CMD_SET_VIEW, x, y, zoom, rot) — camera for
+                                // all subsequent commands until reset_view()
+                                let x = tuple.get_item(1)?.extract::<f32>()?;
+                                let y = tuple.get_item(2)?.extract::<f32>()?;
+                                let zoom = tuple.get_item(3)?.extract::<f32>()?;
+                                let rot = tuple.get_item(4)?.extract::<f32>()?;
+                                current_view = Some(make_view(x, y, zoom, rot, screen_w, screen_h));
+                            }
+
+                            CMD_RESET_VIEW => {
+                                current_view = None;
                             }
 
                             _ => {}
@@ -1020,7 +1099,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
         // pass (they do not participate in the scene's z/call ordering)
         let time = engine.start_time.elapsed().as_secs_f32();
         let mut light_cmds: Vec<SpriteDrawCommand> = Vec::new();
-        for (light_id, x, y) in light_draws {
+        for (light_id, x, y, view) in light_draws {
             if let Some(light) = engine.lights.get(light_id) {
                 // Calculate effective intensity with flicker
                 let mut intensity = light.intensity;
@@ -1051,13 +1130,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     seq: 0,
                     color_override: Some(color),
                     size_override: None,
+                    view,
                 });
             }
         }
 
         // Expand particle draws into sprite commands (all particles of a
         // system share its z and seq; they stay in generation order)
-        for (ps_id, z, seq) in particle_draws {
+        for (ps_id, z, seq, view) in particle_draws {
             if let Some(system) = engine.particle_systems.get(ps_id) {
                 if let Some(sprite_id) = system.config.sprite_id {
                     // Render as sprites (textured particles) with particle color
@@ -1085,6 +1165,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 draw_cmd.11,
                             ]),
                             size_override: None,
+                            view,
                         }));
                     }
                 } else {
@@ -1109,6 +1190,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             seq,
                             color_override: Some(color),
                             size_override: Some((vert_cmd.3, vert_cmd.4)),
+                            view,
                         }));
                     }
                 }
@@ -1633,6 +1715,7 @@ mod tests {
             seq: 0,
             color_override: None,
             size_override: None,
+            view: None,
         }
     }
 
@@ -1652,6 +1735,7 @@ mod tests {
             color: [255, 255, 255, 255],
             z,
             seq,
+            view: None,
         })
     }
 
@@ -1673,6 +1757,38 @@ mod tests {
         assert_eq!(keys, vec![(0, 1), (0, 3), (0, 4), (1, 0), (2, 2)]);
         // The z=2 sprite must come after the z=1 text
         assert!(matches!(items.last().unwrap(), DrawItem::Sprite(_)));
+    }
+
+    #[test]
+    fn make_view_centers_the_camera_point() {
+        // The world point given to set_view must land at the screen center
+        // for any zoom/rotation
+        let v = make_view(300.0, 200.0, 1.7, 0.6, 640.0, 480.0);
+        let p = view_apply(&v, 300.0, 200.0);
+        assert!((p[0] - 320.0).abs() < 1e-3);
+        assert!((p[1] - 240.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn view_scales_and_translates_sprite_vertices() {
+        // Camera at world origin, zoom 2, 200x100 screen: p -> 2p + (100, 50)
+        let sprite = test_sprite();
+        let mut cmd = test_cmd(); // x=10, y=20, region 64x32
+        cmd.view = Some(make_view(0.0, 0.0, 2.0, 0.0, 200.0, 100.0));
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        assert_eq!(verts[0].position, [120.0, 90.0]); // top-left (10, 20)
+        assert_eq!(verts[4].position, [248.0, 154.0]); // bottom-right (74, 52)
+    }
+
+    #[test]
+    fn view_rotation_spins_the_world_around_the_camera() {
+        // 90° view rotation, camera at origin, zero-size screen for clarity:
+        // world +x must map onto screen +y
+        let v = make_view(0.0, 0.0, 1.0, std::f32::consts::FRAC_PI_2, 0.0, 0.0);
+        let p = view_apply(&v, 1.0, 0.0);
+        assert!(p[0].abs() < 1e-6);
+        assert!((p[1] - 1.0).abs() < 1e-6);
     }
 
     #[test]

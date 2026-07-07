@@ -10,6 +10,8 @@ from pgfx._batch import (
     line,
     particles_render,
     rect_fill,
+    reset_view,
+    set_view,
     text,
 )
 from pgfx._native import (
