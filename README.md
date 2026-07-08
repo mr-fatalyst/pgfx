@@ -185,7 +185,7 @@ skipped entirely.
 
 | Function | Description |
 |----------|-------------|
-| `init(width, height, title, **opts)` | Initialize window. Options: `fullscreen`, `resizable`, `fps_limit` (frames per second cap, `0` = uncapped; VSync is always on) |
+| `init(width, height, title, **opts)` | Initialize window. Options: `fullscreen`, `resizable`, `fps_limit` (frames per second cap, `0` = uncapped; VSync is always on), `msaa` (`1` = off, default; `4` = 4x antialiasing of polygon edges — rotated rects, thick lines, sprites; render targets stay non-multisampled) |
 | `run(update_fn, render_fn, on_ready=None)` | Start game loop. `update_fn(dt)` returns `False` to quit; `on_ready()` is called once when the GPU is initialized. Exceptions raised in callbacks propagate out of `run()`. When `run()` returns, the window is closed, all resources are freed and pgfx is deinitialized — call `init()` to start again |
 | `quit()` | Exit game loop (from a callback) or deinitialize pgfx (outside of `run()`) |
 | `dt()` | Delta time in seconds |

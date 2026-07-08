@@ -508,10 +508,10 @@ fn generate_text_vertices(
 pub fn create_sprite_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
+    sample_count: u32,
 ) -> Result<
     (
-        wgpu::RenderPipeline,
-        wgpu::RenderPipeline,
+        SpritePipelines,
         wgpu::BindGroupLayout,
         wgpu::BindGroupLayout,
         wgpu::Buffer,
@@ -580,9 +580,11 @@ pub fn create_sprite_pipeline(
         push_constant_ranges: &[],
     });
 
-    // Two identical pipelines that differ only in the blend state: shader
-    // output is premultiplied, so additive is simply (One, One)
-    let make_pipeline = |label: &str, blend: wgpu::BlendState| {
+    // Pipelines differ only in blend state and sample count: shader output
+    // is premultiplied, so additive is simply (One, One). The screen pair
+    // uses `sample_count` (MSAA); the target pair is always single-sample —
+    // render targets are not multisampled.
+    let make_pipeline = |label: &str, blend: wgpu::BlendState, samples: u32| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -613,7 +615,7 @@ pub fn create_sprite_pipeline(
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: samples,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -622,10 +624,7 @@ pub fn create_sprite_pipeline(
         })
     };
 
-    let pipeline = make_pipeline(
-        "Sprite Render Pipeline",
-        wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-    );
+    let alpha = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
     let additive = wgpu::BlendState {
         color: wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
@@ -638,16 +637,29 @@ pub fn create_sprite_pipeline(
             operation: wgpu::BlendOperation::Add,
         },
     };
-    let pipeline_add = make_pipeline("Sprite Render Pipeline (additive)", additive);
+    let pipelines = SpritePipelines {
+        screen: make_pipeline("Sprite Render Pipeline", alpha, sample_count),
+        screen_add: make_pipeline("Sprite Render Pipeline (additive)", additive, sample_count),
+        target: make_pipeline("Sprite Target Pipeline", alpha, 1),
+        target_add: make_pipeline("Sprite Target Pipeline (additive)", additive, 1),
+    };
 
     // Return pipelines, both bind group layouts, and projection buffer
     Ok((
-        pipeline,
-        pipeline_add,
+        pipelines,
         projection_bind_group_layout,
         texture_bind_group_layout,
         projection_buffer,
     ))
+}
+
+/// The sprite pipelines: alpha/additive blending for the (possibly
+/// multisampled) screen pass and for single-sample render-target passes
+pub struct SpritePipelines {
+    pub screen: wgpu::RenderPipeline,
+    pub screen_add: wgpu::RenderPipeline,
+    pub target: wgpu::RenderPipeline,
+    pub target_add: wgpu::RenderPipeline,
 }
 
 /// Format of the offscreen lightmap: linear (non-sRGB) accumulation buffer
@@ -1468,6 +1480,31 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             }
         }
 
+        // (Re)create the MSAA color buffer on first use or after a resize
+        let msaa_samples = engine.config.msaa;
+        if msaa_samples > 1 {
+            let (sw, sh) = (surface_config.width, surface_config.height);
+            if engine.msaa_texture.is_none() || engine.msaa_size != (sw, sh) {
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("MSAA Color Buffer"),
+                    size: wgpu::Extent3d {
+                        width: sw,
+                        height: sh,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: msaa_samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: surface_config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                engine.msaa_view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                engine.msaa_texture = Some(texture);
+                engine.msaa_size = (sw, sh);
+            }
+        }
+
         // Get surface texture
         let output = surface.get_current_texture().map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -1734,17 +1771,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             });
 
             if !bucket_batches[i].is_empty() {
-                let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
-                })?;
-                let sprite_pipeline_add = engine.sprite_pipeline_add.as_ref().ok_or_else(|| {
+                let pipelines = engine.sprite_pipelines.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
                 })?;
                 draw_sprite_batches(
                     &mut pass,
                     &bucket_batches[i],
-                    sprite_pipeline,
-                    sprite_pipeline_add,
+                    &pipelines.target,
+                    &pipelines.target_add,
                     &target.projection_bind_group,
                     engine.sprite_vertex_buffer.as_ref().unwrap(),
                     &engine.textures,
@@ -1812,14 +1846,27 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                 b: 0.0,
                 a: 1.0,
             });
+            // With MSAA the scene is drawn into the multisampled buffer and
+            // hardware-resolved into the surface; samples are not kept
+            let (pass_view, resolve_target, store) = if msaa_samples > 1 {
+                (
+                    engine.msaa_view.as_ref().ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err("MSAA buffer not initialized")
+                    })?,
+                    Some(&view),
+                    wgpu::StoreOp::Discard,
+                )
+            } else {
+                (&view, None, wgpu::StoreOp::Store)
+            };
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    view: pass_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_color),
-                        store: wgpu::StoreOp::Store,
+                        store,
                     },
                     depth_slice: None,
                 })],
@@ -1831,17 +1878,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             if let (false, Some(projection_bind_group)) =
                 (bucket_batches[0].is_empty(), projection_bind_group.as_ref())
             {
-                let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
-                })?;
-                let sprite_pipeline_add = engine.sprite_pipeline_add.as_ref().ok_or_else(|| {
+                let pipelines = engine.sprite_pipelines.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
                 })?;
                 draw_sprite_batches(
                     &mut render_pass,
                     &bucket_batches[0],
-                    sprite_pipeline,
-                    sprite_pipeline_add,
+                    &pipelines.screen,
+                    &pipelines.screen_add,
                     projection_bind_group,
                     engine.sprite_vertex_buffer.as_ref().unwrap(),
                     &engine.textures,

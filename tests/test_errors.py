@@ -98,3 +98,10 @@ def test_particles_load_rejects_non_object(tmp_path):
     path.write_text("[1, 2, 3]")
     with pytest.raises(ValueError, match="JSON object"):
         pgfx.particles_load(str(path))
+
+
+def test_init_rejects_bad_msaa():
+    # validation happens before the engine is created, so this process
+    # stays uninitialized for the other tests
+    with pytest.raises(ValueError, match="msaa"):
+        pgfx.init(100, 100, "x", msaa=3)

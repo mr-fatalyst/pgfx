@@ -36,6 +36,7 @@ pub struct EngineConfig {
     pub fullscreen: bool,
     pub resizable: bool,
     pub fps_limit: u32,
+    pub msaa: u32, // 1 = off, 4 = 4x multisampling for the screen pass
 }
 
 /// Main engine state
@@ -58,8 +59,7 @@ pub struct Engine {
     pub(crate) scale_factor: f64,
 
     // Sprite rendering pipeline (used for everything - sprites, primitives, text)
-    pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) sprite_pipeline_add: Option<wgpu::RenderPipeline>,
+    pub(crate) sprite_pipelines: Option<crate::renderer::SpritePipelines>,
     pub(crate) sprite_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub(crate) sprite_texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub(crate) sprite_projection_buffer: Option<wgpu::Buffer>,
@@ -77,6 +77,10 @@ pub struct Engine {
     pub(crate) lightmap_texture: Option<wgpu::Texture>,
     pub(crate) lightmap_view: Option<wgpu::TextureView>,
     pub(crate) lightmap_size: (u32, u32),
+    // MSAA color buffer for the screen pass (resolved into the surface)
+    pub(crate) msaa_texture: Option<wgpu::Texture>,
+    pub(crate) msaa_view: Option<wgpu::TextureView>,
+    pub(crate) msaa_size: (u32, u32),
 
     // Resources
     pub(crate) textures: crate::resources::ResourcePool<crate::texture::Texture>,
@@ -124,8 +128,7 @@ impl Engine {
             device: None,
             queue: None,
             surface_config: None,
-            sprite_pipeline: None,
-            sprite_pipeline_add: None,
+            sprite_pipelines: None,
             sprite_bind_group_layout: None,
             sprite_texture_bind_group_layout: None,
             sprite_projection_buffer: None,
@@ -139,6 +142,9 @@ impl Engine {
             lightmap_texture: None,
             lightmap_view: None,
             lightmap_size: (0, 0),
+            msaa_texture: None,
+            msaa_view: None,
+            msaa_size: (0, 0),
             textures: crate::resources::ResourcePool::new(),
             sprites: crate::resources::ResourcePool::new(),
             fonts: crate::resources::ResourcePool::new(),
@@ -374,16 +380,17 @@ impl ApplicationHandler for AppHandler {
             // Initialize GPU
             match crate::renderer::init_gpu(window_arc) {
                 Ok((instance, surface, device, queue, surface_config)) => {
-                    // Create sprite pipeline (used for everything)
+                    // Create sprite pipelines (used for everything)
+                    let msaa = with_engine(|engine| engine.config.msaa).unwrap_or(1);
                     let (
-                        sprite_pipeline,
-                        sprite_pipeline_add,
+                        sprite_pipelines,
                         sprite_bind_group_layout,
                         sprite_texture_bind_group_layout,
                         sprite_projection_buffer,
                     ) = match crate::renderer::create_sprite_pipeline(
                         &device,
                         surface_config.format,
+                        msaa,
                     ) {
                         Ok(pipeline) => pipeline,
                         Err(e) => {
@@ -415,8 +422,7 @@ impl ApplicationHandler for AppHandler {
                         }
 
                         engine.set_gpu(instance, surface, device, queue, surface_config);
-                        engine.sprite_pipeline = Some(sprite_pipeline);
-                        engine.sprite_pipeline_add = Some(sprite_pipeline_add);
+                        engine.sprite_pipelines = Some(sprite_pipelines);
                         engine.sprite_bind_group_layout = Some(sprite_bind_group_layout);
                         engine.sprite_texture_bind_group_layout =
                             Some(sprite_texture_bind_group_layout);
@@ -596,7 +602,7 @@ impl ApplicationHandler for AppHandler {
 }
 
 #[pyfunction]
-#[pyo3(signature = (width, height, title, fullscreen=false, resizable=false, fps_limit=60))]
+#[pyo3(signature = (width, height, title, fullscreen=false, resizable=false, fps_limit=60, msaa=1))]
 pub fn init(
     width: u32,
     height: u32,
@@ -604,7 +610,16 @@ pub fn init(
     fullscreen: bool,
     resizable: bool,
     fps_limit: u32,
+    msaa: u32,
 ) -> PyResult<()> {
+    // WebGPU guarantees only 1 and 4 samples for our formats
+    if msaa != 1 && msaa != 4 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "msaa must be 1 (off) or 4, got {}",
+            msaa
+        )));
+    }
+
     let mut guard = ENGINE.lock().unwrap();
     if guard.is_some() {
         return Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -619,6 +634,7 @@ pub fn init(
         fullscreen,
         resizable,
         fps_limit,
+        msaa,
     };
 
     *guard = Some(Engine::new(config));
@@ -747,6 +763,7 @@ mod tests {
             fullscreen: false,
             resizable: true,
             fps_limit: 60,
+            msaa: 1,
         };
 
         assert_eq!(config.width, 1024);
@@ -776,6 +793,7 @@ mod tests {
             fullscreen: false,
             resizable: false,
             fps_limit: 0,
+            msaa: 1,
         };
 
         let engine = Engine::new(config);
