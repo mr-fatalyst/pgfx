@@ -29,12 +29,23 @@ def test_draw_with_z(clean_commands):
 
 def test_draw_ex_defaults(clean_commands):
     pgfx.draw_ex(7, 1.0, 2.0)
-    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 1, 1, False, False, 0)]
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 1, 1, False, False, 0, 1)]
 
 
 def test_draw_ex_full(clean_commands):
     pgfx.draw_ex(7, 1.0, 2.0, rot=0.5, scale=2, alpha=0.8, flip_x=True, flip_y=True, z=3)
-    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0.5, 2, 0.8, True, True, 3)]
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0.5, 2, 0.8, True, True, 3, 2)]
+
+
+def test_draw_ex_scale_y(clean_commands):
+    # scale_y defaults to scale; an explicit value overrides only the height
+    pgfx.draw_ex(7, 1.0, 2.0, scale=2, scale_y=0.5)
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 2, 1, False, False, 0, 0.5)]
+
+
+def test_rect_fill_ex(clean_commands):
+    pgfx.rect_fill_ex(10, 20, 30, 40, pgfx.RED, rot=0.5, z=2)
+    assert commands() == [(_batch.CMD_RECT_FILL_EX, 10, 20, 30, 40, 0.5, 255, 0, 0, 255, 2)]
 
 
 def test_rect_fill(clean_commands):

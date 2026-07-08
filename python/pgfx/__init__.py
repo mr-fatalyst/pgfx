@@ -10,6 +10,7 @@ from pgfx._batch import (
     line,
     particles_render,
     rect_fill,
+    rect_fill_ex,
     reset_view,
     set_view,
     text,

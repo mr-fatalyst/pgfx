@@ -14,6 +14,7 @@ pub const CMD_PARTICLES_RENDER: u8 = 7;
 pub const CMD_LIGHT_DRAW: u8 = 8;
 pub const CMD_SET_VIEW: u8 = 9;
 pub const CMD_RESET_VIEW: u8 = 10;
+pub const CMD_RECT_FILL_EX: u8 = 11;
 
 // Text alignment (the x of a text() call anchors each line's left edge,
 // center or right edge)
@@ -195,7 +196,8 @@ struct SpriteDrawCommand {
     x: f32,
     y: f32,
     rot: f32,
-    scale: f32,
+    scale: f32,   // horizontal scale
+    scale_y: f32, // vertical scale (usually equal to scale)
     alpha: f32,
     flip_x: bool,
     flip_y: bool,
@@ -252,12 +254,12 @@ fn generate_sprite_vertices(
     let (w, h) = if let Some((ow, oh)) = cmd.size_override {
         (ow, oh)
     } else {
-        (region_w as f32 * cmd.scale, region_h as f32 * cmd.scale)
+        (region_w as f32 * cmd.scale, region_h as f32 * cmd.scale_y)
     };
 
     // Apply origin offset (pivot point) - origin is in pixels, scale it
     let ox = origin_x * cmd.scale;
-    let oy = origin_y * cmd.scale;
+    let oy = origin_y * cmd.scale_y;
 
     // Calculate corner positions before rotation (relative to origin)
     let corners = [
@@ -906,6 +908,42 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     y,
                                     rot: 0.0,
                                     scale: 1.0,
+                                    scale_y: 1.0,
+                                    alpha: 1.0,
+                                    flip_x: false,
+                                    flip_y: false,
+                                    z,
+                                    seq,
+                                    color_override: Some([r, g, b, a]),
+                                    size_override: Some((w, h)),
+                                    view: current_view,
+                                }));
+                            }
+
+                            CMD_RECT_FILL_EX => {
+                                // (CMD_RECT_FILL_EX, x, y, w, h, rot, r, g, b, a, z)
+                                // x, y is the CENTER; rotation is around it
+                                let cx = tuple.get_item(1)?.extract::<f32>()?;
+                                let cy = tuple.get_item(2)?.extract::<f32>()?;
+                                let w = tuple.get_item(3)?.extract::<f32>()?;
+                                let h = tuple.get_item(4)?.extract::<f32>()?;
+                                let rot = tuple.get_item(5)?.extract::<f32>()?;
+                                let r = tuple.get_item(6)?.extract::<u8>()? as f32 / 255.0;
+                                let g = tuple.get_item(7)?.extract::<u8>()? as f32 / 255.0;
+                                let b = tuple.get_item(8)?.extract::<u8>()? as f32 / 255.0;
+                                let a = tuple.get_item(9)?.extract::<u8>()? as f32 / 255.0;
+                                let z = tuple.get_item(10)?.extract::<i32>()?;
+
+                                // The quad's own origin is its top-left corner:
+                                // place it so the rect stays centered after rotation
+                                let (sin, cos) = rot.sin_cos();
+                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                    sprite_id: white_pixel_sprite,
+                                    x: cx - (w * cos - h * sin) / 2.0,
+                                    y: cy - (w * sin + h * cos) / 2.0,
+                                    rot,
+                                    scale: 1.0,
+                                    scale_y: 1.0,
                                     alpha: 1.0,
                                     flip_x: false,
                                     flip_y: false,
@@ -944,6 +982,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                         y: y1 - cos * width / 2.0,
                                         rot,
                                         scale: 1.0,
+                                        scale_y: 1.0,
                                         alpha: 1.0,
                                         flip_x: false,
                                         flip_y: false,
@@ -975,6 +1014,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     y: cy,
                                     rot: 0.0,
                                     scale: diameter / 1024.0,
+                                    scale_y: diameter / 1024.0,
                                     alpha: 1.0,
                                     flip_x: false,
                                     flip_y: false,
@@ -999,6 +1039,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     y,
                                     rot: 0.0,
                                     scale: 1.0,
+                                    scale_y: 1.0,
                                     alpha: 1.0,
                                     flip_x: false,
                                     flip_y: false,
@@ -1011,7 +1052,8 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             }
 
                             CMD_DRAW_EX => {
-                                // (CMD_DRAW_EX, sprite_id, x, y, rot, scale, alpha, flip_x, flip_y, z)
+                                // (CMD_DRAW_EX, sprite_id, x, y, rot, scale, alpha,
+                                //  flip_x, flip_y, z, scale_y)
                                 let sprite_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let x = tuple.get_item(2)?.extract::<f32>()?;
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
@@ -1021,6 +1063,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let flip_x = tuple.get_item(7)?.extract::<bool>()?;
                                 let flip_y = tuple.get_item(8)?.extract::<bool>()?;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
+                                let scale_y = tuple.get_item(10)?.extract::<f32>()?;
 
                                 items.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id,
@@ -1028,6 +1071,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     y,
                                     rot,
                                     scale,
+                                    scale_y,
                                     alpha,
                                     flip_x,
                                     flip_y,
@@ -1138,6 +1182,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     y,
                     rot: 0.0,
                     scale: diameter / 1024.0, // CircleSoft is 1024px
+                    scale_y: diameter / 1024.0,
                     alpha: 1.0,
                     flip_x: false,
                     flip_y: false,
@@ -1168,6 +1213,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             y: draw_cmd.3,
                             rot: draw_cmd.4,
                             scale: draw_cmd.5,
+                            scale_y: draw_cmd.5,
                             alpha: 1.0, // Alpha is in color_override
                             flip_x: draw_cmd.6,
                             flip_y: draw_cmd.7,
@@ -1198,6 +1244,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             y: vert_cmd.2,
                             rot: 0.0,
                             scale: 1.0,
+                            scale_y: 1.0,
                             alpha: 1.0,
                             flip_x: false,
                             flip_y: false,
@@ -1723,6 +1770,7 @@ mod tests {
             y: 20.0,
             rot: 0.0,
             scale: 1.0,
+            scale_y: 1.0,
             alpha: 1.0,
             flip_x: false,
             flip_y: false,
@@ -1773,6 +1821,39 @@ mod tests {
         assert_eq!(keys, vec![(0, 1), (0, 3), (0, 4), (1, 0), (2, 2)]);
         // The z=2 sprite must come after the z=1 text
         assert!(matches!(items.last().unwrap(), DrawItem::Sprite(_)));
+    }
+
+    #[test]
+    fn rect_fill_ex_corner_math_centers_the_quad() {
+        // Mirrors the CMD_RECT_FILL_EX corner placement: after rotation the
+        // quad must stay centered on the requested point
+        let (w, h, rot) = (40.0f32, 20.0f32, 0.7f32);
+        let (cx, cy) = (100.0f32, 50.0f32);
+        let (sin, cos) = rot.sin_cos();
+        let mut cmd = test_cmd();
+        cmd.x = cx - (w * cos - h * sin) / 2.0;
+        cmd.y = cy - (w * sin + h * cos) / 2.0;
+        cmd.rot = rot;
+        cmd.size_override = Some((w, h));
+
+        let verts = generate_sprite_vertices(&test_sprite(), (64, 32), &cmd);
+        // center = midpoint of the diagonal (top-left, bottom-right)
+        let ccx = (verts[0].position[0] + verts[4].position[0]) / 2.0;
+        let ccy = (verts[0].position[1] + verts[4].position[1]) / 2.0;
+        assert!((ccx - cx).abs() < 1e-3);
+        assert!((ccy - cy).abs() < 1e-3);
+    }
+
+    #[test]
+    fn scale_y_stretches_height_only() {
+        let sprite = test_sprite(); // 64x32 region
+        let mut cmd = test_cmd(); // at (10, 20)
+        cmd.scale = 2.0;
+        cmd.scale_y = 3.0;
+
+        let verts = generate_sprite_vertices(&sprite, (64, 32), &cmd);
+        assert_eq!(verts[0].position, [10.0, 20.0]);
+        assert_eq!(verts[4].position, [10.0 + 64.0 * 2.0, 20.0 + 32.0 * 3.0]);
     }
 
     #[test]

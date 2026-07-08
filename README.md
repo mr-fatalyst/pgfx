@@ -228,14 +228,15 @@ skipped entirely.
 | `sprite_set_color(spr, color)` | Set tint color |
 | `sprite_free(spr)` | Free sprite |
 
-### Drawing (8)
+### Drawing (9)
 
 | Function | Description |
 |----------|-------------|
 | `clear(color)` | Clear screen |
 | `draw(spr, x, y)` | Draw sprite |
-| `draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False)` | Draw with transform |
+| `draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False, scale_y=None)` | Draw with transform; `scale_y` (default: same as `scale`) enables non-uniform scaling |
 | `rect_fill(x, y, w, h, color)` | Draw rectangle |
+| `rect_fill_ex(x, y, w, h, color, rot=0)` | Draw a rotated rectangle **centered** on `(x, y)` — the anchor is the middle (like `circle_fill`), rotation is around it |
 | `line(x1, y1, x2, y2, color, width=2)` | Draw line (centered on the segment) |
 | `circle_fill(x, y, r, color)` | Draw circle |
 | `set_view(x, y, zoom=1, rot=0)` | Camera: place world point `(x, y)` at the screen center for subsequent draws, zoomed and rotated around it |

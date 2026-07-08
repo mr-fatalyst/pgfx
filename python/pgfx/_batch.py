@@ -14,6 +14,7 @@ CMD_PARTICLES_RENDER = 7
 CMD_LIGHT_DRAW = 8
 CMD_SET_VIEW = 9
 CMD_RESET_VIEW = 10
+CMD_RECT_FILL_EX = 11
 
 # Command buffer
 _commands = []
@@ -37,14 +38,23 @@ def draw(spr, x, y, z=0):
     _commands.append((CMD_DRAW, spr, x, y, z))
 
 
-def draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False, z=0):
-    """Draw a sprite with transformation options. z=0 by default (back), higher z = on top."""
-    _commands.append((CMD_DRAW_EX, spr, x, y, rot, scale, alpha, flip_x, flip_y, z))
+def draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False, z=0, scale_y=None):
+    """Draw a sprite with transformation options. z=0 by default (back), higher
+    z = on top. scale_y (default: same as scale) stretches the sprite vertically
+    for non-uniform scaling."""
+    sy = scale if scale_y is None else scale_y
+    _commands.append((CMD_DRAW_EX, spr, x, y, rot, scale, alpha, flip_x, flip_y, z, sy))
 
 
 def rect_fill(x, y, w, h, color, z=0):
     """Draw a filled rectangle."""
     _commands.append((CMD_RECT_FILL, x, y, w, h, color.r, color.g, color.b, color.a, z))
+
+
+def rect_fill_ex(x, y, w, h, color, rot=0.0, z=0):
+    """Draw a filled rectangle CENTERED on (x, y), rotated by rot around its
+    center — like circle_fill, the anchor is the middle, not the corner."""
+    _commands.append((CMD_RECT_FILL_EX, x, y, w, h, rot, color.r, color.g, color.b, color.a, z))
 
 
 def line(x1, y1, x2, y2, color, z=0, width=2):
