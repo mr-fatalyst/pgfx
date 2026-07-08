@@ -52,8 +52,9 @@ def render():
     pgfx.light_draw(torch, 150, 460)
     pgfx.light_draw(beacon, 650, 150)
 
-    pgfx.text(font, "MOVE THE MOUSE — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM,
-              align="center")
+    pgfx.text(
+        font, "MOVE THE MOUSE — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center"
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

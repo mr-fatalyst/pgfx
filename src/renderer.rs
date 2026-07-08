@@ -988,23 +988,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let a = tuple.get_item(8)?.extract::<u8>()? as f32 / 255.0;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
 
-                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                    sprite_id: white_pixel_sprite,
-                                    x,
-                                    y,
-                                    rot: 0.0,
-                                    scale: 1.0,
-                                    scale_y: 1.0,
-                                    alpha: 1.0,
-                                    flip_x: false,
-                                    flip_y: false,
-                                    z,
-                                    seq,
-                                    color_override: Some([r, g, b, a]),
-                                    size_override: Some((w, h)),
-                                    view: current_view,
-                                    blend: BLEND_ALPHA,
-                                }));
+                                buckets[bucket_idx]
+                                    .1
+                                    .push(DrawItem::Sprite(SpriteDrawCommand {
+                                        sprite_id: white_pixel_sprite,
+                                        x,
+                                        y,
+                                        rot: 0.0,
+                                        scale: 1.0,
+                                        scale_y: 1.0,
+                                        alpha: 1.0,
+                                        flip_x: false,
+                                        flip_y: false,
+                                        z,
+                                        seq,
+                                        color_override: Some([r, g, b, a]),
+                                        size_override: Some((w, h)),
+                                        view: current_view,
+                                        blend: BLEND_ALPHA,
+                                    }));
                             }
 
                             CMD_RECT_FILL_EX => {
@@ -1024,23 +1026,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 // The quad's own origin is its top-left corner:
                                 // place it so the rect stays centered after rotation
                                 let (sin, cos) = rot.sin_cos();
-                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                    sprite_id: white_pixel_sprite,
-                                    x: cx - (w * cos - h * sin) / 2.0,
-                                    y: cy - (w * sin + h * cos) / 2.0,
-                                    rot,
-                                    scale: 1.0,
-                                    scale_y: 1.0,
-                                    alpha: 1.0,
-                                    flip_x: false,
-                                    flip_y: false,
-                                    z,
-                                    seq,
-                                    color_override: Some([r, g, b, a]),
-                                    size_override: Some((w, h)),
-                                    view: current_view,
-                                    blend: BLEND_ALPHA,
-                                }));
+                                buckets[bucket_idx]
+                                    .1
+                                    .push(DrawItem::Sprite(SpriteDrawCommand {
+                                        sprite_id: white_pixel_sprite,
+                                        x: cx - (w * cos - h * sin) / 2.0,
+                                        y: cy - (w * sin + h * cos) / 2.0,
+                                        rot,
+                                        scale: 1.0,
+                                        scale_y: 1.0,
+                                        alpha: 1.0,
+                                        flip_x: false,
+                                        flip_y: false,
+                                        z,
+                                        seq,
+                                        color_override: Some([r, g, b, a]),
+                                        size_override: Some((w, h)),
+                                        view: current_view,
+                                        blend: BLEND_ALPHA,
+                                    }));
                             }
 
                             CMD_LINE => {
@@ -1064,23 +1068,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     // Center the quad on the line: offset by half
                                     // the width perpendicular to the direction
                                     let (sin, cos) = rot.sin_cos();
-                                    buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                        sprite_id: white_pixel_sprite,
-                                        x: x1 + sin * width / 2.0,
-                                        y: y1 - cos * width / 2.0,
-                                        rot,
-                                        scale: 1.0,
-                                        scale_y: 1.0,
-                                        alpha: 1.0,
-                                        flip_x: false,
-                                        flip_y: false,
-                                        z,
-                                        seq,
-                                        color_override: Some([r, g, b, a]),
-                                        size_override: Some((len, width)),
-                                        view: current_view,
-                                        blend: BLEND_ALPHA,
-                                    }));
+                                    buckets[bucket_idx].1.push(DrawItem::Sprite(
+                                        SpriteDrawCommand {
+                                            sprite_id: white_pixel_sprite,
+                                            x: x1 + sin * width / 2.0,
+                                            y: y1 - cos * width / 2.0,
+                                            rot,
+                                            scale: 1.0,
+                                            scale_y: 1.0,
+                                            alpha: 1.0,
+                                            flip_x: false,
+                                            flip_y: false,
+                                            z,
+                                            seq,
+                                            color_override: Some([r, g, b, a]),
+                                            size_override: Some((len, width)),
+                                            view: current_view,
+                                            blend: BLEND_ALPHA,
+                                        },
+                                    ));
                                 }
                             }
 
@@ -1097,23 +1103,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
                                 // Circle texture is 1024x1024, scale to diameter
                                 let diameter = radius * 2.0;
-                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                    sprite_id: circle_sprite,
-                                    x: cx,
-                                    y: cy,
-                                    rot: 0.0,
-                                    scale: diameter / 1024.0,
-                                    scale_y: diameter / 1024.0,
-                                    alpha: 1.0,
-                                    flip_x: false,
-                                    flip_y: false,
-                                    z,
-                                    seq,
-                                    color_override: Some([r, g, b, a]),
-                                    size_override: None,
-                                    view: current_view,
-                                    blend: BLEND_ALPHA,
-                                }));
+                                buckets[bucket_idx]
+                                    .1
+                                    .push(DrawItem::Sprite(SpriteDrawCommand {
+                                        sprite_id: circle_sprite,
+                                        x: cx,
+                                        y: cy,
+                                        rot: 0.0,
+                                        scale: diameter / 1024.0,
+                                        scale_y: diameter / 1024.0,
+                                        alpha: 1.0,
+                                        flip_x: false,
+                                        flip_y: false,
+                                        z,
+                                        seq,
+                                        color_override: Some([r, g, b, a]),
+                                        size_override: None,
+                                        view: current_view,
+                                        blend: BLEND_ALPHA,
+                                    }));
                             }
 
                             CMD_DRAW => {
@@ -1123,23 +1131,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
                                 let z = tuple.get_item(4)?.extract::<i32>()?;
 
-                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                    sprite_id,
-                                    x,
-                                    y,
-                                    rot: 0.0,
-                                    scale: 1.0,
-                                    scale_y: 1.0,
-                                    alpha: 1.0,
-                                    flip_x: false,
-                                    flip_y: false,
-                                    z,
-                                    seq,
-                                    color_override: None,
-                                    size_override: None,
-                                    view: current_view,
-                                    blend: BLEND_ALPHA,
-                                }));
+                                buckets[bucket_idx]
+                                    .1
+                                    .push(DrawItem::Sprite(SpriteDrawCommand {
+                                        sprite_id,
+                                        x,
+                                        y,
+                                        rot: 0.0,
+                                        scale: 1.0,
+                                        scale_y: 1.0,
+                                        alpha: 1.0,
+                                        flip_x: false,
+                                        flip_y: false,
+                                        z,
+                                        seq,
+                                        color_override: None,
+                                        size_override: None,
+                                        view: current_view,
+                                        blend: BLEND_ALPHA,
+                                    }));
                             }
 
                             CMD_DRAW_EX => {
@@ -1157,23 +1167,25 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let scale_y = tuple.get_item(10)?.extract::<f32>()?;
                                 let blend = tuple.get_item(11)?.extract::<u8>()?;
 
-                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
-                                    sprite_id,
-                                    x,
-                                    y,
-                                    rot,
-                                    scale,
-                                    scale_y,
-                                    alpha,
-                                    flip_x,
-                                    flip_y,
-                                    z,
-                                    seq,
-                                    color_override: None,
-                                    size_override: None,
-                                    view: current_view,
-                                    blend,
-                                }));
+                                buckets[bucket_idx]
+                                    .1
+                                    .push(DrawItem::Sprite(SpriteDrawCommand {
+                                        sprite_id,
+                                        x,
+                                        y,
+                                        rot,
+                                        scale,
+                                        scale_y,
+                                        alpha,
+                                        flip_x,
+                                        flip_y,
+                                        z,
+                                        seq,
+                                        color_override: None,
+                                        size_override: None,
+                                        view: current_view,
+                                        blend,
+                                    }));
                             }
 
                             CMD_TEXT => {
@@ -1499,7 +1511,8 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     view_formats: &[],
                 });
-                engine.msaa_view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                engine.msaa_view =
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
                 engine.msaa_texture = Some(texture);
                 engine.msaa_size = (sw, sh);
             }
@@ -1571,11 +1584,11 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             .get(sprite.texture_id)
                             .map(|t| t.size)
                             .ok_or_else(|| {
-                                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                    "Invalid texture ID: {}",
-                                    sprite.texture_id
-                                ))
-                            })?;
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Invalid texture ID: {}",
+                                sprite.texture_id
+                            ))
+                        })?;
 
                         switch_batch(
                             &mut batches,

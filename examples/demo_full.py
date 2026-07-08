@@ -92,8 +92,9 @@ def render():
     pgfx.text(font, f"FPS: {pgfx.fps()}   time: {pgfx.time():.0f}s", 18, 16, pgfx.WHITE, z=4)
     status = f"touching: {touching}" if touching else "touching: none"
     pgfx.text(font, status, 18, 44, pgfx.CYAN if touching else pgfx.WHITE, z=4)
-    pgfx.text(font, "WASD/ARROWS — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 30, DIM, z=4,
-              align="center")
+    pgfx.text(
+        font, "WASD/ARROWS — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 30, DIM, z=4, align="center"
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

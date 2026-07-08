@@ -73,8 +73,14 @@ def render():
     tv(180, 440, 0.42, rot=0.1, blend="add", alpha=0.9)
     tv(SCREEN_W - 180, 440, 0.42, rot=-0.1, alpha=0.55)
 
-    pgfx.text(font, "ONE SCENE, FIVE SCREENS — ESC TO QUIT",
-              SCREEN_W / 2, SCREEN_H - 32, DIM, align="center")
+    pgfx.text(
+        font,
+        "ONE SCENE, FIVE SCREENS — ESC TO QUIT",
+        SCREEN_W / 2,
+        SCREEN_H - 32,
+        DIM,
+        align="center",
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

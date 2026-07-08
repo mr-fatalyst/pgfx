@@ -41,8 +41,14 @@ def render():
     pgfx.text(font, "z=1", 480, 260, pgfx.WHITE)
     pgfx.text(font, "z=0, drawn LAST in code", 540, 330, pgfx.WHITE)
 
-    pgfx.text(font, "the first-drawn ball covers the others — z wins over call order",
-              SCREEN_W / 2, 470, pgfx.GREEN, align="center")
+    pgfx.text(
+        font,
+        "the first-drawn ball covers the others — z wins over call order",
+        SCREEN_W / 2,
+        470,
+        pgfx.GREEN,
+        align="center",
+    )
     pgfx.text(font, "ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
 
 

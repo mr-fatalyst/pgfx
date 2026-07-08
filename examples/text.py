@@ -34,14 +34,14 @@ def render():
     pgfx.text(font, "Multiline is one call:\nsecond line\nthird line", 50, 170, pgfx.CYAN)
     pgfx.text(font, "smooth=True (default)", 50, 290, pgfx.WHITE)
     pgfx.text(font_pixel, "smooth=False — pixel-perfect", 50, 320, pgfx.WHITE)
-    pgfx.text(font, "align='center' and align='right' anchor x differently:",
-              50, 390, DIM)
+    pgfx.text(font, "align='center' and align='right' anchor x differently:", 50, 390, DIM)
     pgfx.line(400, 420, 400, 500, pgfx.Color(255, 255, 255, 60))
     pgfx.text(font, "centered on the line", 400, 430, pgfx.GREEN, align="center")
     pgfx.text(font, "ends at the line", 400, 465, pgfx.GREEN, align="right")
 
-    pgfx.text(font, f"{pgfx.fps()} FPS — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM,
-              align="center")
+    pgfx.text(
+        font, f"{pgfx.fps()} FPS — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center"
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

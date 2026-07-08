@@ -32,10 +32,30 @@ KEYFRAMES = [
     (24.0, (10, 10, 40), (20, 20, 60), 1.0),
 ]
 
-RIDGE_BACK = [(0, 480), (100, 430), (200, 460), (350, 410), (500, 450), (650, 400),
-              (800, 440), (950, 420), (1100, 460), (1280, 480)]
-RIDGE_FRONT = [(0, 500), (150, 440), (300, 480), (450, 420), (600, 470), (750, 400),
-               (900, 450), (1050, 430), (1200, 470), (1280, 500)]
+RIDGE_BACK = [
+    (0, 480),
+    (100, 430),
+    (200, 460),
+    (350, 410),
+    (500, 450),
+    (650, 400),
+    (800, 440),
+    (950, 420),
+    (1100, 460),
+    (1280, 480),
+]
+RIDGE_FRONT = [
+    (0, 500),
+    (150, 440),
+    (300, 480),
+    (450, 420),
+    (600, 470),
+    (750, 400),
+    (900, 450),
+    (1050, 430),
+    (1200, 470),
+    (1280, 500),
+]
 STARS = [(x * 137 % SCREEN_W, (x * 89) % 220 + 20) for x in range(40)]
 CLOUDS = [(100, 80, 40), (400, 120, 30), (700, 60, 50), (1000, 140, 35), (200, 180, 32)]
 
@@ -163,8 +183,14 @@ def render():
         pgfx.rect_fill(8, 8, 170, 62, pgfx.Color(0, 0, 0, 180))
         pgfx.text(font, f"{int(hour):02d}:{int(hour * 60) % 60:02d}", 18, 16, pgfx.WHITE)
         pgfx.text(font, f"FPS: {pgfx.fps()}", 18, 42, pgfx.WHITE)
-        pgfx.text(font, "HOLD LEFT/RIGHT TO SCRUB TIME — ESC TO QUIT",
-                  SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
+        pgfx.text(
+            font,
+            "HOLD LEFT/RIGHT TO SCRUB TIME — ESC TO QUIT",
+            SCREEN_W / 2,
+            SCREEN_H - 34,
+            DIM,
+            align="center",
+        )
 
 
 pgfx.run(update, render, on_ready=on_ready)

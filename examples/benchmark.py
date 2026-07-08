@@ -23,12 +23,14 @@ balls = []  # [x, y, vx, vy]
 
 def add_balls(count):
     for _ in range(count):
-        balls.append([
-            random.uniform(50, SCREEN_W - 50),
-            random.uniform(50, SCREEN_H - 50),
-            random.choice((-1, 1)) * random.uniform(60, 220),
-            random.choice((-1, 1)) * random.uniform(60, 220),
-        ])
+        balls.append(
+            [
+                random.uniform(50, SCREEN_W - 50),
+                random.uniform(50, SCREEN_H - 50),
+                random.choice((-1, 1)) * random.uniform(60, 220),
+                random.choice((-1, 1)) * random.uniform(60, 220),
+            ]
+        )
 
 
 def on_ready():
@@ -73,8 +75,15 @@ def render():
     pgfx.rect_fill(8, 8, 210, 62, pgfx.Color(0, 0, 0, 180), z=1)
     pgfx.text(font, f"FPS: {pgfx.fps()}", 18, 16, pgfx.WHITE, z=2)
     pgfx.text(font, f"Sprites: {len(balls)}", 18, 42, pgfx.WHITE, z=2)
-    pgfx.text(font, "UP/DOWN +-100   RIGHT/LEFT +-1000   ESC QUIT",
-              SCREEN_W / 2, SCREEN_H - 34, DIM, z=2, align="center")
+    pgfx.text(
+        font,
+        "UP/DOWN +-100   RIGHT/LEFT +-1000   ESC QUIT",
+        SCREEN_W / 2,
+        SCREEN_H - 34,
+        DIM,
+        z=2,
+        align="center",
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

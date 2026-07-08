@@ -100,7 +100,9 @@ impl Font {
         if let Some(glyph) = self.glyphs.get(&ch) {
             return glyph.advance;
         }
-        self.font.metrics(self.glyph_source(ch), self.size).advance_width
+        self.font
+            .metrics(self.glyph_source(ch), self.size)
+            .advance_width
     }
 
     /// Width of a single line in logical pixels (advances + kerning;
@@ -458,9 +460,13 @@ pub fn font_load(path: &str, size: u32, smooth: bool) -> PyResult<FontId> {
 #[pyfunction]
 pub fn text_size(font: FontId, text: &str) -> PyResult<(f32, f32)> {
     with_engine(|engine| {
-        engine.fonts.get(font).map(|f| f.measure(text)).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid font ID: {}", font))
-        })
+        engine
+            .fonts
+            .get(font)
+            .map(|f| f.measure(text))
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid font ID: {}", font))
+            })
     })?
 }
 

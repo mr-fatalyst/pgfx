@@ -267,9 +267,10 @@ pub fn target_create(width: u32, height: u32) -> PyResult<TargetId> {
             size: (width, height),
             bind_group,
         });
-        let sprite_id = engine
-            .sprites
-            .insert(crate::sprite::Sprite::new(texture_id, (0, 0, width, height)));
+        let sprite_id = engine.sprites.insert(crate::sprite::Sprite::new(
+            texture_id,
+            (0, 0, width, height),
+        ));
 
         Ok(engine.targets.insert(RenderTarget {
             texture_id,
@@ -295,9 +296,16 @@ pub fn target_free(target: TargetId) -> PyResult<()> {
 #[pyfunction]
 pub fn target_sprite(target: TargetId) -> PyResult<crate::sprite::SpriteId> {
     with_engine(|engine| {
-        engine.targets.get(target).map(|t| t.sprite_id).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid render target ID: {}", target))
-        })
+        engine
+            .targets
+            .get(target)
+            .map(|t| t.sprite_id)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid render target ID: {}",
+                    target
+                ))
+            })
     })?
 }
 

@@ -98,8 +98,14 @@ def render():
     draw_clock(230, 260, 150)
     draw_cards(710, 260, t)
     draw_ball(t)
-    pgfx.text(font, "rect_fill_ex: clock + cards    draw_ex scale_y: the ball    ESC to quit",
-              SCREEN_W / 2, SCREEN_H - 30, pgfx.Color(150, 155, 165), align="center")
+    pgfx.text(
+        font,
+        "rect_fill_ex: clock + cards    draw_ex scale_y: the ball    ESC to quit",
+        SCREEN_W / 2,
+        SCREEN_H - 30,
+        pgfx.Color(150, 155, 165),
+        align="center",
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)

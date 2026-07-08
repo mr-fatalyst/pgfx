@@ -50,8 +50,9 @@ def update(dt):
     py = max(PLAYER_SIZE / 2, min(SCREEN_H - PLAYER_SIZE / 2, py))
 
     half = PLAYER_SIZE / 2
-    if pgfx.collide_circle_rect(coin_x, coin_y, COIN_R, px - half, py - half,
-                                PLAYER_SIZE, PLAYER_SIZE):
+    if pgfx.collide_circle_rect(
+        coin_x, coin_y, COIN_R, px - half, py - half, PLAYER_SIZE, PLAYER_SIZE
+    ):
         score += 1
         place_coin()
 

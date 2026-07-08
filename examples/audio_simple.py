@@ -70,8 +70,9 @@ def render():
         marker = "> " if i == step else "  "
         pgfx.text(font, marker + caption, 120, 120 + i * 34, color)
 
-    pgfx.text(font, "runs by itself — ESC to quit early", SCREEN_W / 2, SCREEN_H - 34, DIM,
-              align="center")
+    pgfx.text(
+        font, "runs by itself — ESC to quit early", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center"
+    )
 
 
 pgfx.run(update, render, on_ready=on_ready)
