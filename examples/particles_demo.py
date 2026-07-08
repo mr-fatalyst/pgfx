@@ -1,4 +1,13 @@
-"""Particle systems demo - fire, smoke, sparks, explosions"""
+"""Particle systems: fire, smoke, sparks and explosions under the mouse.
+
+Fire, sparks and the explosion use blend="add" — overlapping particles
+brighten into a glow. Smoke stays alpha-blended: it should occlude.
+
+Controls:
+    1-4     switch effect
+    LMB     hold to emit (explosion: click for a burst)
+    Esc     quit
+"""
 
 import math
 import os
@@ -6,28 +15,20 @@ import os
 import pgfx
 
 SCREEN_W, SCREEN_H = 1280, 720
+DIM = pgfx.Color(150, 155, 165)
 
-pgfx.init(SCREEN_W, SCREEN_H, "Particles Demo - Click to spawn effects, 1-4 to switch type")
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx particles")
 
-# Resources (loaded in on_ready)
 font = None
-fire_ps = None
-smoke_ps = None
-sparks_ps = None
-explosion_ps = None
-
-# Current effect type
-current_effect = 1  # 1=fire, 2=smoke, 3=sparks, 4=explosion
+effects = []  # (name, ps, continuous)
+current = 0
 
 
 def on_ready():
-    """Called once when GPU is ready"""
-    global font, fire_ps, smoke_ps, sparks_ps, explosion_ps
-
+    global font
     font = pgfx.font_load(os.path.join(os.path.dirname(__file__), "assets/font.ttf"), 18)
 
-    # Create fire particle system (soft circles)
-    fire_ps = pgfx.particles_create(
+    fire = pgfx.particles_create(
         primitive="circle_soft",
         emission_rate=80,
         lifetime_min=0.4,
@@ -42,10 +43,9 @@ def on_ready():
         start_size=18,
         end_size=4,
         max_particles=400,
+        blend="add",
     )
-
-    # Create smoke particle system
-    smoke_ps = pgfx.particles_create(
+    smoke = pgfx.particles_create(
         primitive="circle_soft",
         emission_rate=30,
         lifetime_min=1.5,
@@ -61,9 +61,7 @@ def on_ready():
         end_size=30,
         max_particles=200,
     )
-
-    # Create sparks particle system
-    sparks_ps = pgfx.particles_create(
+    sparks = pgfx.particles_create(
         primitive="circle",
         emission_rate=120,
         lifetime_min=0.4,
@@ -78,17 +76,15 @@ def on_ready():
         start_size=2,
         end_size=1,
         max_particles=500,
+        blend="add",
     )
-
-    # Create explosion particle system
-    explosion_ps = pgfx.particles_create(
+    explosion = pgfx.particles_create(
         primitive="circle_soft",
-        emission_rate=0,
+        emission_rate=0,  # burst only
         lifetime_min=0.3,
         lifetime_max=1.0,
         speed_min=80,
         speed_max=350,
-        direction=0,
         spread=math.pi * 2,
         gravity=(0, 180),
         start_color=(255, 220, 100, 255),
@@ -96,93 +92,72 @@ def on_ready():
         start_size=35,
         end_size=8,
         max_particles=400,
+        blend="add",
     )
+
+    effects.append(("Fire", fire, True))
+    effects.append(("Smoke", smoke, True))
+    effects.append(("Sparks", sparks, True))
+    effects.append(("Explosion", explosion, False))
 
 
 def update(dt):
-    global current_effect
-
-    if not fire_ps:
+    global current
+    if not effects:
         return True
 
-    # Switch effect type
-    if pgfx.key_pressed(pgfx.KEY_1):
-        current_effect = 1
-        pgfx.particles_stop(smoke_ps)
-        pgfx.particles_stop(sparks_ps)
-    elif pgfx.key_pressed(pgfx.KEY_2):
-        current_effect = 2
-        pgfx.particles_stop(fire_ps)
-        pgfx.particles_stop(sparks_ps)
-    elif pgfx.key_pressed(pgfx.KEY_3):
-        current_effect = 3
-        pgfx.particles_stop(fire_ps)
-        pgfx.particles_stop(smoke_ps)
-    elif pgfx.key_pressed(pgfx.KEY_4):
-        current_effect = 4
-        pgfx.particles_stop(fire_ps)
-        pgfx.particles_stop(smoke_ps)
-        pgfx.particles_stop(sparks_ps)
+    for i, key in enumerate((pgfx.KEY_1, pgfx.KEY_2, pgfx.KEY_3, pgfx.KEY_4)):
+        if pgfx.key_pressed(key):
+            current = i
 
-    mouse_x, mouse_y = pgfx.mouse_pos()
+    mx, my = pgfx.mouse_pos()
+    name, ps, continuous = effects[current]
 
-    if pgfx.mouse_down(pgfx.MOUSE_LEFT):
-        if current_effect == 1:
-            pgfx.particles_fire(fire_ps, mouse_x, mouse_y)
-        elif current_effect == 2:
-            pgfx.particles_fire(smoke_ps, mouse_x, mouse_y)
-        elif current_effect == 3:
-            pgfx.particles_fire(sparks_ps, mouse_x, mouse_y)
-    else:
-        if current_effect != 4:
-            pgfx.particles_stop(fire_ps)
-            pgfx.particles_stop(smoke_ps)
-            pgfx.particles_stop(sparks_ps)
+    for _, other, _ in effects:
+        if other is not ps:
+            pgfx.particles_stop(other)
 
-    if current_effect == 4 and pgfx.mouse_pressed(pgfx.MOUSE_LEFT):
-        pgfx.particles_emit(explosion_ps, mouse_x, mouse_y, 100)
+    if continuous:
+        if pgfx.mouse_down(pgfx.MOUSE_LEFT):
+            pgfx.particles_fire(ps, mx, my)
+        else:
+            pgfx.particles_stop(ps)
+    elif pgfx.mouse_pressed(pgfx.MOUSE_LEFT):
+        pgfx.particles_emit(ps, mx, my, 100)
 
-    pgfx.particles_move_to(fire_ps, mouse_x, mouse_y)
-    pgfx.particles_move_to(smoke_ps, mouse_x, mouse_y)
-    pgfx.particles_move_to(sparks_ps, mouse_x, mouse_y)
-
-    pgfx.particles_update(fire_ps, dt)
-    pgfx.particles_update(smoke_ps, dt)
-    pgfx.particles_update(sparks_ps, dt)
-    pgfx.particles_update(explosion_ps, dt)
+    for _, other, _ in effects:
+        pgfx.particles_update(other, dt)
 
     return not pgfx.key_pressed(pgfx.KEY_ESCAPE)
 
 
 def render():
     pgfx.clear(pgfx.Color(15, 15, 25))
-
-    if not fire_ps:
+    if not effects:
         return
 
-    pgfx.particles_render(fire_ps)
-    pgfx.particles_render(smoke_ps)
-    pgfx.particles_render(sparks_ps)
-    pgfx.particles_render(explosion_ps)
+    for _, ps, _ in effects:
+        pgfx.particles_render(ps)
 
-    pgfx.rect_fill(5, 5, 300, 130, pgfx.Color(0, 0, 0, 180))
-    pgfx.text(font, f"FPS: {pgfx.fps()}", 15, 12, pgfx.Color(255, 255, 255))
+    total = sum(pgfx.particles_count(ps) for _, ps, _ in effects)
+    stats = f"FPS: {pgfx.fps()}   particles: {total}"
+    labels = [f"{i + 1}: {name}" for i, (name, _, _) in enumerate(effects)]
+    hint = "hold LMB to emit (4: click)"
 
-    total = (
-        pgfx.particles_count(fire_ps)
-        + pgfx.particles_count(smoke_ps)
-        + pgfx.particles_count(sparks_ps)
-        + pgfx.particles_count(explosion_ps)
-    )
-    pgfx.text(font, f"Particles: {total}", 15, 35, pgfx.Color(255, 255, 255))
+    # panel sized to its content, labels laid out by measured width
+    gap = 26
+    row_w = sum(pgfx.text_size(font, s)[0] for s in labels) + gap * (len(labels) - 1)
+    panel_w = max(row_w, pgfx.text_size(font, stats)[0], pgfx.text_size(font, hint)[0]) + 20
+    pgfx.rect_fill(8, 8, panel_w, 88, pgfx.Color(0, 0, 0, 180), z=1)
 
-    effects = ["1: Fire", "2: Smoke", "3: Sparks", "4: Explosion"]
-    for i, name in enumerate(effects):
-        color = pgfx.Color(255, 255, 0) if current_effect == i + 1 else pgfx.Color(150, 150, 150)
-        pgfx.text(font, name, 15 + i * 75, 60, color)
+    pgfx.text(font, stats, 18, 16, pgfx.WHITE, z=2)
+    x = 18
+    for i, label in enumerate(labels):
+        pgfx.text(font, label, x, 42, pgfx.YELLOW if i == current else DIM, z=2)
+        x += pgfx.text_size(font, label)[0] + gap
+    pgfx.text(font, hint, 18, 68, DIM, z=2)
 
-    pgfx.text(font, "Hold LMB to emit, ESC to exit", 15, 85, pgfx.Color(100, 100, 100))
-    pgfx.text(font, "Press 1-4 to switch effect", 15, 108, pgfx.Color(100, 100, 100))
+    pgfx.text(font, "ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
 
 
 pgfx.run(update, render, on_ready=on_ready)

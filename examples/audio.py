@@ -1,70 +1,77 @@
-"""Audio example - sounds and music."""
+"""Sounds and music with on-screen state.
+
+Controls:
+    Space   play the sound effect
+    P       play music from the start (loops)
+    M / R   pause / resume music
+    S       stop music
+    Esc     quit
+"""
 
 import os
 
 import pgfx
 
-pgfx.init(800, 600, "Audio Example")
+SCREEN_W, SCREEN_H = 800, 600
+DIM = pgfx.Color(150, 155, 165)
 
-sound = None
-music = None
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx audio")
+
+font = sound = music = None
+music_state = "stopped"
 
 
 def on_ready():
-    global sound, music
-    print("Loading audio...")
+    global font, sound, music, music_state
+    here = os.path.dirname(__file__)
+    font = pgfx.font_load(os.path.join(here, "assets/font.ttf"), 20)
+    sound = pgfx.sound_load(os.path.join(here, "assets/sound.wav"))
+    music = pgfx.music_load(os.path.join(here, "assets/music.wav"))
 
-    try:
-        sound = pgfx.sound_load(os.path.join(os.path.dirname(__file__), "assets/sound.wav"))
-        print(f"Sound loaded: ID {sound}")
-    except Exception as e:
-        print(f"Failed to load sound: {e}")
-
-    try:
-        music = pgfx.music_load(os.path.join(os.path.dirname(__file__), "assets/music.wav"))
-        print(f"Music loaded: ID {music}")
-        pgfx.music_play(music)
-        print("Music started (looping)")
-        pgfx.set_music_volume(0.5)
-    except Exception as e:
-        print(f"Failed to load/play music: {e}")
+    pgfx.set_music_volume(0.5)
+    pgfx.music_play(music)
+    music_state = "playing"
 
 
 def update(dt):
-    if pgfx.key_pressed(pgfx.KEY_SPACE) and sound:
-        print("Playing sound effect...")
+    global music_state
+    if not font:
+        return True
+
+    if pgfx.key_pressed(pgfx.KEY_SPACE):
         pgfx.sound_play(sound)
-
-    if pgfx.key_pressed(pgfx.KEY_M) and music:
-        print("Pausing music...")
-        pgfx.music_pause(music)
-
-    if pgfx.key_pressed(pgfx.KEY_R) and music:
-        print("Resuming music...")
-        pgfx.music_resume(music)
-
-    if pgfx.key_pressed(pgfx.KEY_S) and music:
-        print("Stopping music...")
-        pgfx.music_stop(music)
-
-    if pgfx.key_pressed(pgfx.KEY_P) and music:
-        print("Replaying music...")
+    if pgfx.key_pressed(pgfx.KEY_P):
         pgfx.music_play(music)
+        music_state = "playing"
+    if pgfx.key_pressed(pgfx.KEY_M) and music_state == "playing":
+        pgfx.music_pause(music)
+        music_state = "paused"
+    if pgfx.key_pressed(pgfx.KEY_R) and music_state == "paused":
+        pgfx.music_resume(music)
+        music_state = "playing"
+    if pgfx.key_pressed(pgfx.KEY_S):
+        pgfx.music_stop(music)
+        music_state = "stopped"
 
     return not pgfx.key_pressed(pgfx.KEY_ESCAPE)
 
 
 def render():
-    pgfx.clear(pgfx.Color(30, 30, 50))
+    pgfx.clear(pgfx.Color(24, 26, 34))
+    if not font:
+        return
 
+    pgfx.text(font, f"music: {music_state}", SCREEN_W / 2, 200, pgfx.WHITE, align="center")
 
-print("Controls:")
-print("  SPACE - Play sound effect")
-print("  M - Pause music")
-print("  R - Resume music")
-print("  S - Stop music")
-print("  P - Play music again")
-print("  ESC - Exit")
-print()
+    lines = [
+        "SPACE — sound effect",
+        "P — play music    S — stop",
+        "M — pause    R — resume",
+    ]
+    for i, line in enumerate(lines):
+        pgfx.text(font, line, SCREEN_W / 2, 280 + i * 32, DIM, align="center")
+
+    pgfx.text(font, "ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
+
 
 pgfx.run(update, render, on_ready=on_ready)

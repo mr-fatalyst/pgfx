@@ -1,3 +1,12 @@
+"""Arkanoid: a complete little game — paddle, ball, bricks and particles.
+
+Controls:
+    Left / Right (A / D)    move the paddle
+    Space                   launch the ball / restart
+    P                       pause
+    Esc                     quit
+"""
+
 import math
 import os
 import random
@@ -6,7 +15,7 @@ import pgfx
 
 SCREEN_W, SCREEN_H = 800, 600
 
-pgfx.init(SCREEN_W, SCREEN_H, "Arkanoid")
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx arkanoid")
 
 # Paddle
 PADDLE_W, PADDLE_H = 100, 15
@@ -287,31 +296,25 @@ def render():
 
     # UI
     pgfx.text(font, f"Score: {score}", 10, 10, pgfx.WHITE)
-    pgfx.text(font, f"Lives: {lives}", SCREEN_W - 80, 10, pgfx.WHITE)
+    pgfx.text(font, f"Lives: {lives}", SCREEN_W - 10, 10, pgfx.WHITE, align="right")
 
+    cx, cy = SCREEN_W // 2, SCREEN_H // 2
     if paused:
-        pgfx.rect_fill(SCREEN_W // 2 - 80, SCREEN_H // 2 - 30, 160, 60, pgfx.Color(0, 0, 0, 200))
-        pgfx.text(font, "PAUSED", SCREEN_W // 2 - 40, SCREEN_H // 2 - 15, pgfx.YELLOW)
-        pgfx.text(font, "Press P to resume", SCREEN_W // 2 - 80, SCREEN_H // 2 + 10, pgfx.WHITE)
+        pgfx.rect_fill(cx - 110, cy - 35, 220, 70, pgfx.Color(0, 0, 0, 200))
+        pgfx.text(font, "PAUSED", cx, cy - 20, pgfx.YELLOW, align="center")
+        pgfx.text(font, "Press P to resume", cx, cy + 5, pgfx.WHITE, align="center")
 
     if ball_stuck and not paused:
-        pgfx.text(font, "Press SPACE to launch", SCREEN_W // 2 - 100, SCREEN_H // 2, pgfx.YELLOW)
+        pgfx.text(font, "Press SPACE to launch", cx, cy, pgfx.YELLOW, align="center")
 
-    if game_over:
-        pgfx.rect_fill(SCREEN_W // 2 - 120, SCREEN_H // 2 - 50, 240, 100, pgfx.Color(0, 0, 0, 200))
-        pgfx.text(font, "GAME OVER", SCREEN_W // 2 - 60, SCREEN_H // 2 - 30, pgfx.RED)
-        pgfx.text(font, f"Final Score: {score}", SCREEN_W // 2 - 70, SCREEN_H // 2, pgfx.WHITE)
-        pgfx.text(
-            font, "Press SPACE to restart", SCREEN_W // 2 - 100, SCREEN_H // 2 + 25, pgfx.YELLOW
-        )
-
-    if game_won:
-        pgfx.rect_fill(SCREEN_W // 2 - 120, SCREEN_H // 2 - 50, 240, 100, pgfx.Color(0, 0, 0, 200))
-        pgfx.text(font, "YOU WIN!", SCREEN_W // 2 - 50, SCREEN_H // 2 - 30, pgfx.GREEN)
-        pgfx.text(font, f"Final Score: {score}", SCREEN_W // 2 - 70, SCREEN_H // 2, pgfx.WHITE)
-        pgfx.text(
-            font, "Press SPACE to restart", SCREEN_W // 2 - 100, SCREEN_H // 2 + 25, pgfx.YELLOW
-        )
+    if game_over or game_won:
+        pgfx.rect_fill(cx - 130, cy - 50, 260, 100, pgfx.Color(0, 0, 0, 200))
+        if game_won:
+            pgfx.text(font, "YOU WIN!", cx, cy - 30, pgfx.GREEN, align="center")
+        else:
+            pgfx.text(font, "GAME OVER", cx, cy - 30, pgfx.RED, align="center")
+        pgfx.text(font, f"Final Score: {score}", cx, cy, pgfx.WHITE, align="center")
+        pgfx.text(font, "Press SPACE to restart", cx, cy + 25, pgfx.YELLOW, align="center")
 
 
 pgfx.run(update, render, on_ready=on_ready)

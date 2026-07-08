@@ -1,26 +1,26 @@
+"""clear() sets the frame's background color; the last call in a frame wins.
+
+The background cycles through a small palette once a second. ESC to quit.
+"""
+
 import pgfx
 
-pgfx.init(800, 600, "Clear Example")
+PALETTE = [
+    pgfx.Color(170, 50, 40),
+    pgfx.Color(40, 130, 60),
+    pgfx.Color(40, 70, 160),
+    pgfx.Color(120, 50, 140),
+]
 
-frame = 0
+pgfx.init(800, 600, "pgfx clear")
 
 
 def update(dt):
-    global frame
-    frame += 1
-    return frame < 300  # 5 seconds at 60fps
+    return not pgfx.key_pressed(pgfx.KEY_ESCAPE)
 
 
 def render():
-    # Change color every 60 frames
-    if frame < 60:
-        pgfx.clear(pgfx.RED)
-    elif frame < 120:
-        pgfx.clear(pgfx.GREEN)
-    elif frame < 180:
-        pgfx.clear(pgfx.BLUE)
-    else:
-        pgfx.clear(pgfx.Color(128, 0, 128))  # Purple
+    pgfx.clear(PALETTE[int(pgfx.time()) % len(PALETTE)])
 
 
 pgfx.run(update, render)

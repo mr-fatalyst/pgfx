@@ -1,19 +1,23 @@
-"""Text rendering example."""
+"""Text basics: sizes, colors, multiline, unicode and pixel-perfect fonts."""
 
 import os
 
 import pgfx
 
-pgfx.init(800, 600, "Text Example")
+SCREEN_W, SCREEN_H = 800, 600
+DIM = pgfx.Color(150, 155, 165)
 
-font = None
-font_big = None
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx text")
+
+font = font_big = font_pixel = None
 
 
 def on_ready():
-    global font, font_big
-    font = pgfx.font_load(os.path.join(os.path.dirname(__file__), "assets/font.ttf"), 24)
-    font_big = pgfx.font_load(os.path.join(os.path.dirname(__file__), "assets/font.ttf"), 48)
+    global font, font_big, font_pixel
+    path = os.path.join(os.path.dirname(__file__), "assets/font.ttf")
+    font = pgfx.font_load(path, 22)
+    font_big = pgfx.font_load(path, 48)
+    font_pixel = pgfx.font_load(path, 22, smooth=False)  # pixel-perfect
 
 
 def update(dt):
@@ -21,13 +25,23 @@ def update(dt):
 
 
 def render():
-    pgfx.clear(pgfx.Color(30, 30, 50))
+    pgfx.clear(pgfx.Color(24, 26, 34))
+    if not font:
+        return
 
-    if font:
-        pgfx.text(font, "Hello, pgfx!", 50, 50, pgfx.WHITE)
-        pgfx.text(font, f"FPS: {pgfx.fps()}", 50, 100, pgfx.GREEN)
-        pgfx.text(font_big, "Big Text", 50, 200, pgfx.YELLOW)
-        pgfx.text(font, "Press ESC to quit", 50, 500, pgfx.Color(150, 150, 150))
+    pgfx.text(font_big, "Hello, pgfx!", 50, 40, pgfx.YELLOW)
+    pgfx.text(font, "Any unicode the font provides: Hello World! Ünïcodé", 50, 120, pgfx.WHITE)
+    pgfx.text(font, "Multiline is one call:\nsecond line\nthird line", 50, 170, pgfx.CYAN)
+    pgfx.text(font, "smooth=True (default)", 50, 290, pgfx.WHITE)
+    pgfx.text(font_pixel, "smooth=False — pixel-perfect", 50, 320, pgfx.WHITE)
+    pgfx.text(font, "align='center' and align='right' anchor x differently:",
+              50, 390, DIM)
+    pgfx.line(400, 420, 400, 500, pgfx.Color(255, 255, 255, 60))
+    pgfx.text(font, "centered on the line", 400, 430, pgfx.GREEN, align="center")
+    pgfx.text(font, "ends at the line", 400, 465, pgfx.GREEN, align="right")
+
+    pgfx.text(font, f"{pgfx.fps()} FPS — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM,
+              align="center")
 
 
 pgfx.run(update, render, on_ready=on_ready)

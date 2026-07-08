@@ -1,11 +1,8 @@
-"""Window creation and basic event loop."""
+"""The smallest pgfx program: a window, a clear color, an exit key."""
 
 import pgfx
 
-pgfx.init(800, 600, "Window Example")
-
-print("Window initialized successfully!")
-print(f"Screen size: {pgfx.screen_size()}")
+pgfx.init(800, 600, "pgfx window")
 
 
 def update(dt):
@@ -13,7 +10,7 @@ def update(dt):
 
 
 def render():
-    pgfx.clear(pgfx.Color(30, 30, 50))
+    pgfx.clear(pgfx.Color(24, 26, 34))
 
 
 pgfx.run(update, render)

@@ -1,55 +1,59 @@
-"""Lighting system example."""
+"""Lighting: ambient darkness plus moving, flickering and pulsing lights.
+
+set_ambient() darkens the whole frame; light_draw() adds light on top.
+The warm lamp follows the mouse, the torch flickers, the beacon pulses.
+"""
+
+import math
+import os
 
 import pgfx
 
-pgfx.init(800, 600, "Lighting Example")
+SCREEN_W, SCREEN_H = 800, 600
+DIM = pgfx.Color(150, 155, 165)
 
-light1 = None
-light2 = None
-light3 = None
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx lighting")
 
-light1_pos = [400, 300]
-light2_pos = [200, 200]
-light3_pos = [600, 400]
+font = lamp = torch = beacon = None
 
 
 def on_ready():
-    global light1, light2, light3
+    global font, lamp, torch, beacon
+    font = pgfx.font_load(os.path.join(os.path.dirname(__file__), "assets/font.ttf"), 17)
 
-    light1 = pgfx.light_create(200, pgfx.Color(255, 100, 100))  # Orange
-    light2 = pgfx.light_create(150, pgfx.Color(100, 100, 255))  # Purple
-    light3 = pgfx.light_create(180, pgfx.Color(100, 255, 100))  # Green
+    lamp = pgfx.light_create(220, pgfx.Color(255, 190, 120))
+    torch = pgfx.light_create(150, pgfx.Color(255, 130, 60))
+    pgfx.light_set_flicker(torch, 0.35, 2.5)
+    beacon = pgfx.light_create(180, pgfx.Color(110, 160, 255))
 
-    pgfx.light_set_intensity(light2, 0.8)
-    pgfx.light_set_flicker(light3, 0.3, 2.0)
-    pgfx.set_ambient(pgfx.Color(50, 50, 70))
+    pgfx.set_ambient(pgfx.Color(40, 40, 60))  # how dark the unlit scene is
 
 
 def update(dt):
-    speed = 200
-    if pgfx.key_down(pgfx.KEY_LEFT):
-        light1_pos[0] -= speed * dt
-    if pgfx.key_down(pgfx.KEY_RIGHT):
-        light1_pos[0] += speed * dt
-    if pgfx.key_down(pgfx.KEY_UP):
-        light1_pos[1] -= speed * dt
-    if pgfx.key_down(pgfx.KEY_DOWN):
-        light1_pos[1] += speed * dt
-
+    if beacon:
+        pulse = 0.5 + 0.5 * math.sin(pgfx.time() * 2.0)
+        pgfx.light_set_intensity(beacon, 0.3 + 0.7 * pulse)
     return not pgfx.key_pressed(pgfx.KEY_ESCAPE)
 
 
 def render():
-    pgfx.clear(pgfx.Color(20, 20, 30))
+    pgfx.clear(pgfx.Color(30, 32, 40))
+    if not font:
+        return
 
-    pgfx.rect_fill(100, 100, 100, 100, pgfx.Color(80, 80, 80))
-    pgfx.rect_fill(300, 200, 120, 80, pgfx.Color(100, 100, 100))
-    pgfx.rect_fill(500, 350, 150, 120, pgfx.Color(90, 90, 90))
+    # something to light: a grid of pillars
+    for gx in range(80, SCREEN_W, 160):
+        for gy in range(100, SCREEN_H - 100, 140):
+            pgfx.rect_fill(gx, gy, 60, 60, pgfx.Color(110, 105, 95))
+            pgfx.rect_fill(gx, gy, 60, 8, pgfx.Color(140, 135, 120))
 
-    if light1:
-        pgfx.light_draw(light1, light1_pos[0], light1_pos[1])
-        pgfx.light_draw(light2, light2_pos[0], light2_pos[1])
-        pgfx.light_draw(light3, light3_pos[0], light3_pos[1])
+    mx, my = pgfx.mouse_pos()
+    pgfx.light_draw(lamp, mx, my)
+    pgfx.light_draw(torch, 150, 460)
+    pgfx.light_draw(beacon, 650, 150)
+
+    pgfx.text(font, "MOVE THE MOUSE — ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM,
+              align="center")
 
 
 pgfx.run(update, render, on_ready=on_ready)

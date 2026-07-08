@@ -1,24 +1,27 @@
-"""Z-order test - demonstrates layer sorting for sprites."""
+"""z-order: draw order in code does not matter, z does.
+
+Three balls are drawn front-to-back in code — the OPPOSITE of how they
+appear: the first call has the highest z and lands on top. Within the same
+z, call order still applies.
+"""
 
 import os
 
 import pgfx
 
-pgfx.init(800, 600, "Z-Order Test - Sprites")
+SCREEN_W, SCREEN_H = 800, 600
+DIM = pgfx.Color(150, 155, 165)
 
-spr1 = None
-spr2 = None
-spr3 = None
-font = None
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx z-order")
+
+font = ball = None
 
 
 def on_ready():
-    global spr1, spr2, spr3, font
-    # Load same sprite 3 times (in real game would be different sprites)
-    spr1 = pgfx.sprite_load(os.path.join(os.path.dirname(__file__), "assets/ball.png"))
-    spr2 = pgfx.sprite_load(os.path.join(os.path.dirname(__file__), "assets/ball.png"))
-    spr3 = pgfx.sprite_load(os.path.join(os.path.dirname(__file__), "assets/ball.png"))
-    font = pgfx.font_load(os.path.join(os.path.dirname(__file__), "assets/font.ttf"), 20)
+    global font, ball
+    here = os.path.dirname(__file__)
+    font = pgfx.font_load(os.path.join(here, "assets/font.ttf"), 18)
+    ball = pgfx.sprite_load(os.path.join(here, "assets/ball.png"))
 
 
 def update(dt):
@@ -26,36 +29,21 @@ def update(dt):
 
 
 def render():
-    pgfx.clear(pgfx.Color(30, 30, 50))
-
-    if not spr1:
+    pgfx.clear(pgfx.Color(24, 26, 34))
+    if not font:
         return
 
-    # Draw in WRONG order in code, but z fixes it
-    # Code order: spr1 first, spr3 last
-    # Expected visual: spr1 (z=2) on top, spr3 (z=0) at back
+    pgfx.draw_ex(ball, 280, 180, z=2, scale=4)  # first call — on top (z=2)
+    pgfx.draw_ex(ball, 340, 240, z=1, scale=4)
+    pgfx.draw_ex(ball, 400, 300, z=0, scale=4)  # last call — at the back (z=0)
 
-    # First in code, but z=2 - should be ON TOP
-    pgfx.draw_ex(spr1, 300, 250, z=2, scale=3)
+    pgfx.text(font, "z=2, drawn FIRST in code", 420, 190, pgfx.YELLOW)
+    pgfx.text(font, "z=1", 480, 260, pgfx.WHITE)
+    pgfx.text(font, "z=0, drawn LAST in code", 540, 330, pgfx.WHITE)
 
-    # Second in code, z=1 - should be MIDDLE
-    pgfx.draw_ex(spr2, 340, 290, z=1, scale=3)
-
-    # Last in code, but z=0 - should be at BACK
-    pgfx.draw_ex(spr3, 380, 330, z=0, scale=3)
-
-    # Without z-order: spr3 would be on top (drawn last)
-    # With z-order: spr1 on top (highest z=2)
-
-    if font:
-        pgfx.text(font, "Z-Order Test", 20, 20, pgfx.WHITE)
-        pgfx.text(font, "Top-left sprite: z=2 (drawn FIRST in code)", 20, 60, pgfx.YELLOW)
-        pgfx.text(font, "Middle sprite: z=1", 20, 90, pgfx.WHITE)
-        pgfx.text(font, "Bottom-right sprite: z=0 (drawn LAST in code)", 20, 120, pgfx.WHITE)
-        pgfx.text(font, "", 20, 160, pgfx.WHITE)
-        pgfx.text(font, "If z-order works: top-left sprite is visible on top", 20, 180, pgfx.GREEN)
-        pgfx.text(font, "If broken: bottom-right sprite would be on top", 20, 210, pgfx.RED)
-        pgfx.text(font, "ESC to exit", 20, 550, pgfx.Color(100, 100, 100))
+    pgfx.text(font, "the first-drawn ball covers the others — z wins over call order",
+              SCREEN_W / 2, 470, pgfx.GREEN, align="center")
+    pgfx.text(font, "ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
 
 
 pgfx.run(update, render, on_ready=on_ready)

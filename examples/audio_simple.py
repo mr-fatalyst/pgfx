@@ -1,122 +1,77 @@
-#!/usr/bin/env python3
-"""Simple audio API example without window"""
+"""The audio API step by step, no interaction: each step runs on a timer.
+
+Plays a sound, starts music, adjusts volumes, pauses, resumes and stops —
+the current step is shown on screen. Quits by itself after the last step.
+"""
 
 import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pgfx
 
-print("Demonstrating audio API...")
+SCREEN_W, SCREEN_H = 800, 600
+STEP_SECONDS = 1.5
+DIM = pgfx.Color(150, 155, 165)
 
-# Initialize engine
-pgfx.init(800, 600, "Audio API Example")
+pgfx.init(SCREEN_W, SCREEN_H, "pgfx audio walkthrough")
 
-# loading sound
-try:
-    print("\n1. Loading sound...")
-    sound = pgfx.sound_load(os.path.join(os.path.dirname(__file__), "assets/sound.wav"))
-    print(f"   SUCCESS: Sound loaded with ID {sound}")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+font = sound = music = None
+step = -1
+step_timer = 0.0
 
-# loading music
-try:
-    print("\n2. Loading music...")
-    music = pgfx.music_load(os.path.join(os.path.dirname(__file__), "assets/music.wav"))
-    print(f"   SUCCESS: Music loaded with ID {music}")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+STEPS = [
+    ("sound_play(sound)", lambda: pgfx.sound_play(sound)),
+    ("music_play(music, loop_=True)", lambda: pgfx.music_play(music, loop_=True)),
+    ("set_music_volume(0.4)", lambda: pgfx.set_music_volume(0.4)),
+    ("set_master_volume(0.7)", lambda: pgfx.set_master_volume(0.7)),
+    ("music_pause(music)", lambda: pgfx.music_pause(music)),
+    ("music_resume(music)", lambda: pgfx.music_resume(music)),
+    ("sound_play(sound, volume=0.6, pan=-1)", lambda: pgfx.sound_play(sound, volume=0.6, pan=-1)),
+    ("sound_play(sound, volume=0.6, pan=1)", lambda: pgfx.sound_play(sound, volume=0.6, pan=1)),
+    ("music_stop(music)", lambda: pgfx.music_stop(music)),
+]
 
-# playing sound
-try:
-    print("\n3. Playing sound (volume=0.8, no loop)...")
-    pgfx.sound_play(sound, volume=0.8, loop_=False)
-    print("   SUCCESS: Sound playing")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
 
-# playing music
-try:
-    print("\n4. Playing music (looping)...")
-    pgfx.music_play(music, loop_=True)
-    print("   SUCCESS: Music playing")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+def on_ready():
+    global font, sound, music
+    here = os.path.dirname(__file__)
+    font = pgfx.font_load(os.path.join(here, "assets/font.ttf"), 20)
+    sound = pgfx.sound_load(os.path.join(here, "assets/sound.wav"))
+    music = pgfx.music_load(os.path.join(here, "assets/music.wav"))
 
-# volume controls
-try:
-    print("\n5. Setting master volume to 0.7...")
-    pgfx.set_master_volume(0.7)
-    print("   SUCCESS: Master volume set")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
 
-try:
-    print("\n6. Setting music volume to 0.5...")
-    pgfx.set_music_volume(0.5)
-    print("   SUCCESS: Music volume set")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+def update(dt):
+    global step, step_timer
+    if not font:
+        return True
 
-# pause/resume
-try:
-    print("\n7. Pausing music...")
-    pgfx.music_pause(music)
-    print("   SUCCESS: Music paused")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+    step_timer -= dt
+    if step_timer <= 0:
+        step += 1
+        step_timer = STEP_SECONDS
+        if step >= len(STEPS):
+            return False  # done
+        STEPS[step][1]()
 
-try:
-    print("\n8. Resuming music...")
-    pgfx.music_resume(music)
-    print("   SUCCESS: Music resumed")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+    return not pgfx.key_pressed(pgfx.KEY_ESCAPE)
 
-# stop
-try:
-    print("\n9. Stopping music...")
-    pgfx.music_stop(music)
-    print("   SUCCESS: Music stopped")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
 
-try:
-    print("\n10. Stopping sound...")
-    pgfx.sound_stop(sound)
-    print("   SUCCESS: Sound stopped")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+def render():
+    pgfx.clear(pgfx.Color(24, 26, 34))
+    if not font or step < 0:
+        return
 
-# freeing resources
-try:
-    print("\n11. Freeing sound...")
-    pgfx.sound_free(sound)
-    print("   SUCCESS: Sound freed")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+    for i, (caption, _) in enumerate(STEPS):
+        if i < step:
+            color = pgfx.Color(90, 200, 110)
+        elif i == step:
+            color = pgfx.YELLOW
+        else:
+            color = DIM
+        marker = "> " if i == step else "  "
+        pgfx.text(font, marker + caption, 120, 120 + i * 34, color)
 
-try:
-    print("\n12. Freeing music...")
-    pgfx.music_free(music)
-    print("   SUCCESS: Music freed")
-except Exception as e:
-    print(f"   FAILED: {e}")
-    sys.exit(1)
+    pgfx.text(font, "runs by itself — ESC to quit early", SCREEN_W / 2, SCREEN_H - 34, DIM,
+              align="center")
 
-print("\n" + "=" * 50)
-print("ALL AUDIO TESTS PASSED!")
-print("=" * 50)
+
+pgfx.run(update, render, on_ready=on_ready)

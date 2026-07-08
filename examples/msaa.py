@@ -77,7 +77,8 @@ def render():
     pgfx.draw(target_spr, right_x, top_y)
 
     pgfx.text(font, "MSAA 4x — screen", left_x + PANEL_W / 2, 30, pgfx.WHITE, align="center")
-    pgfx.text(font, "no MSAA — via render target", right_x + PANEL_W / 2, 30, pgfx.WHITE, align="center")
+    pgfx.text(font, "no MSAA — via render target", right_x + PANEL_W / 2, 30, pgfx.WHITE,
+              align="center")
     pgfx.text(font, "ESC TO QUIT", SCREEN_W / 2, SCREEN_H - 34, DIM, align="center")
 
 
