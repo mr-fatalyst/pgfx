@@ -78,6 +78,7 @@ pub struct ParticleConfig {
     pub end_size: f32,
     pub emission_rate: f32,     // Particles per second
     pub sprite_id: Option<u32>, // Optional sprite for textured particles
+    pub blend: u8,              // BLEND_ALPHA or BLEND_ADD
 }
 
 impl Default for ParticleConfig {
@@ -96,6 +97,7 @@ impl Default for ParticleConfig {
             end_size: 0.0,
             emission_rate: 0.0, // Manual emission by default
             sprite_id: None,
+            blend: crate::renderer::BLEND_ALPHA,
         }
     }
 }
@@ -381,6 +383,21 @@ fn parse_particle_config(
             let scale: f32 = val.extract()?;
             config.start_size = scale * 4.0;
             config.end_size = scale * 4.0;
+        }
+
+        // Blend mode
+        if let Some(val) = dict.get_item("blend")? {
+            let mode: String = val.extract()?;
+            config.blend = match mode.as_str() {
+                "alpha" => crate::renderer::BLEND_ALPHA,
+                "add" => crate::renderer::BLEND_ADD,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown blend mode: '{}'. Use 'alpha' or 'add'",
+                        mode
+                    )))
+                }
+            };
         }
 
         // Emission rate

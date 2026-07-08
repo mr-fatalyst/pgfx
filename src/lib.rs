@@ -39,6 +39,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Texture
     m.add_function(wrap_pyfunction!(texture::texture_load, m)?)?;
+    m.add_function(wrap_pyfunction!(texture::target_create, m)?)?;
+    m.add_function(wrap_pyfunction!(texture::target_free, m)?)?;
+    m.add_function(wrap_pyfunction!(texture::target_sprite, m)?)?;
+    m.add_function(wrap_pyfunction!(texture::target_size, m)?)?;
     m.add_function(wrap_pyfunction!(texture::texture_free, m)?)?;
     m.add_function(wrap_pyfunction!(texture::texture_size, m)?)?;
 

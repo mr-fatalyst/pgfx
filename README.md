@@ -234,13 +234,23 @@ skipped entirely.
 |----------|-------------|
 | `clear(color)` | Clear screen |
 | `draw(spr, x, y)` | Draw sprite |
-| `draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False, scale_y=None)` | Draw with transform; `scale_y` (default: same as `scale`) enables non-uniform scaling |
+| `draw_ex(spr, x, y, rot=0, scale=1, alpha=1, flip_x=False, flip_y=False, scale_y=None, blend="alpha")` | Draw with transform; `scale_y` (default: same as `scale`) enables non-uniform scaling, `blend="add"` draws additively (glow, fire) |
 | `rect_fill(x, y, w, h, color)` | Draw rectangle |
 | `rect_fill_ex(x, y, w, h, color, rot=0)` | Draw a rotated rectangle **centered** on `(x, y)` — the anchor is the middle (like `circle_fill`), rotation is around it |
 | `line(x1, y1, x2, y2, color, width=2)` | Draw line (centered on the segment) |
 | `circle_fill(x, y, r, color)` | Draw circle |
 | `set_view(x, y, zoom=1, rot=0)` | Camera: place world point `(x, y)` at the screen center for subsequent draws, zoomed and rotated around it |
 | `reset_view()` | Back to screen space — for HUD/UI |
+
+### Render targets (5)
+
+| Function | Description |
+|----------|-------------|
+| `target_create(w, h)` | Create an offscreen render target, returns ID |
+| `target_sprite(target)` | The sprite showing the target's content — draw it like any sprite |
+| `target_size(target)` | Returns `(width, height)` |
+| `target_free(target)` | Free the target (and its texture/sprite) |
+| `render_to(target)` | Redirect subsequent draw calls into the target; `render_to(None)` returns to the screen. Resets the view; `clear()` inside the block sets the target's clear color (default transparent). Target passes run before the screen pass, so a target drawn this frame can be shown the same frame. Drawing a target into itself is an error; lighting ignores `render_to` |
 
 ### Text (4)
 
@@ -299,7 +309,7 @@ skipped entirely.
 | `particles_is_alive(ps)` | Any particles alive |
 | `particles_count(ps)` | Active particle count |
 
-**Particle parameters:** `primitive`, `emission_rate`, `lifetime_min`, `lifetime_max`, `speed_min`, `speed_max`, `direction`, `spread`, `gravity`, `start_color`, `end_color`, `start_size`, `end_size`, `max_particles`
+**Particle parameters:** `primitive`, `emission_rate`, `lifetime_min`, `lifetime_max`, `speed_min`, `speed_max`, `direction`, `spread`, `gravity`, `start_color`, `end_color`, `start_size`, `end_size`, `max_particles`, `blend` (`"alpha"` or `"add"` — additive glow)
 
 ### Lighting (7)
 

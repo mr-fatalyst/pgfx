@@ -15,9 +15,15 @@ pub const CMD_LIGHT_DRAW: u8 = 8;
 pub const CMD_SET_VIEW: u8 = 9;
 pub const CMD_RESET_VIEW: u8 = 10;
 pub const CMD_RECT_FILL_EX: u8 = 11;
+pub const CMD_RENDER_TO: u8 = 12;
+
+// Blend modes for sprite/particle draws
+pub const BLEND_ALPHA: u8 = 0;
+pub const BLEND_ADD: u8 = 1;
 
 // Text alignment (the x of a text() call anchors each line's left edge,
 // center or right edge)
+#[allow(dead_code)] // documents the wire format; it's the match fallback arm
 pub const TEXT_ALIGN_LEFT: u8 = 0;
 pub const TEXT_ALIGN_CENTER: u8 = 1;
 pub const TEXT_ALIGN_RIGHT: u8 = 2;
@@ -74,7 +80,7 @@ impl SpriteVertex {
 
 /// Create orthographic projection matrix
 /// Top-left is (0, 0), bottom-right is (width, height)
-fn create_projection_matrix(width: f32, height: f32) -> glam::Mat4 {
+pub(crate) fn create_projection_matrix(width: f32, height: f32) -> glam::Mat4 {
     glam::Mat4::orthographic_rh(0.0, width, height, 0.0, -1.0, 1.0)
 }
 
@@ -206,6 +212,7 @@ struct SpriteDrawCommand {
     color_override: Option<[f32; 4]>,  // Override sprite color (for particles/primitives)
     size_override: Option<(f32, f32)>, // Override size (w, h) for primitives
     view: Option<View>,                // View transform active when the call was issued
+    blend: u8,                         // BLEND_ALPHA or BLEND_ADD
 }
 
 /// Text draw command (parsed from Python)
@@ -504,6 +511,7 @@ pub fn create_sprite_pipeline(
 ) -> Result<
     (
         wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
         wgpu::BindGroupLayout,
         wgpu::BindGroupLayout,
         wgpu::Buffer,
@@ -572,48 +580,70 @@ pub fn create_sprite_pipeline(
         push_constant_ranges: &[],
     });
 
-    // Create render pipeline
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Sprite Render Pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[SpriteVertex::desc()],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            unclipped_depth: false,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview: None,
-        cache: None,
-    });
+    // Two identical pipelines that differ only in the blend state: shader
+    // output is premultiplied, so additive is simply (One, One)
+    let make_pipeline = |label: &str, blend: wgpu::BlendState| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[SpriteVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        })
+    };
 
-    // Return pipeline, both bind group layouts, and projection buffer
+    let pipeline = make_pipeline(
+        "Sprite Render Pipeline",
+        wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+    );
+    let additive = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let pipeline_add = make_pipeline("Sprite Render Pipeline (additive)", additive);
+
+    // Return pipelines, both bind group layouts, and projection buffer
     Ok((
         pipeline,
+        pipeline_add,
         projection_bind_group_layout,
         texture_bind_group_layout,
         projection_buffer,
@@ -623,24 +653,66 @@ pub fn create_sprite_pipeline(
 /// Format of the offscreen lightmap: linear (non-sRGB) accumulation buffer
 pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Close the current batch and start one for the given texture
+/// Close the current batch and start one for the given (texture, blend) pair
 fn switch_batch(
-    batches: &mut Vec<(u32, u32, u32)>,
-    current_texture_id: &mut Option<u32>,
+    batches: &mut Vec<(u32, u32, u32, u8)>,
+    current_key: &mut Option<(u32, u8)>,
     batch_start: &mut u32,
     vertices_len: u32,
     texture_id: u32,
+    blend: u8,
 ) {
-    if *current_texture_id != Some(texture_id) {
-        if let Some(tex_id) = *current_texture_id {
+    if *current_key != Some((texture_id, blend)) {
+        if let Some((tex_id, prev_blend)) = *current_key {
             let count = vertices_len - *batch_start;
             if count > 0 {
-                batches.push((tex_id, *batch_start, count));
+                batches.push((tex_id, *batch_start, count, prev_blend));
             }
         }
-        *current_texture_id = Some(texture_id);
+        *current_key = Some((texture_id, blend));
         *batch_start = vertices_len;
     }
+}
+
+/// Draw a batch list into an already-configured render pass, switching
+/// between the alpha and additive pipelines as needed (they share a layout,
+/// so bind groups survive the switch)
+fn draw_sprite_batches<'p>(
+    pass: &mut wgpu::RenderPass<'p>,
+    batches: &[(u32, u32, u32, u8)],
+    pipeline: &'p wgpu::RenderPipeline,
+    pipeline_add: &'p wgpu::RenderPipeline,
+    projection_bind_group: &'p wgpu::BindGroup,
+    vertex_buffer: &'p wgpu::Buffer,
+    textures: &'p crate::resources::ResourcePool<crate::texture::Texture>,
+) -> PyResult<()> {
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, projection_bind_group, &[]);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    let mut current_blend = BLEND_ALPHA;
+
+    for &(texture_id, start, count, blend) in batches {
+        if blend != current_blend {
+            pass.set_pipeline(if blend == BLEND_ADD {
+                pipeline_add
+            } else {
+                pipeline
+            });
+            current_blend = blend;
+        }
+        let bind_group = textures
+            .get(texture_id)
+            .and_then(|t| t.bind_group.as_ref())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Invalid texture ID: {}",
+                    texture_id
+                ))
+            })?;
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.draw(start..start + count, 0..1);
+    }
+    Ok(())
 }
 
 /// Create the two lighting pipelines:
@@ -844,23 +916,24 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             PyResult::Ok((wp, c, cs, sw, sh))
         })??;
 
-    // Parse commands into one unified stream; each item carries its position
-    // in the command list (seq) so same-z draws keep the user's call order.
-    let mut clear_color = wgpu::Color {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    };
-    let mut items: Vec<DrawItem> = Vec::with_capacity(commands.len());
+    // Parse commands into per-destination buckets: bucket 0 is the screen,
+    // render_to() opens one per target. Within a bucket each item carries its
+    // position in the command list (seq) so same-z draws keep call order.
+    // Bucket: (target_id 0=screen, items, clear color set this frame)
+    let mut buckets: Vec<(u32, Vec<DrawItem>, Option<wgpu::Color>)> =
+        vec![(0, Vec::with_capacity(commands.len()), None)];
+    let mut bucket_idx = 0usize;
     // light: (light_id, x, y, view) — rendered additively into the lightmap,
-    // so their draw order (and z) is irrelevant
+    // so their draw order (and z) is irrelevant; lighting is a screen-space
+    // pass and ignores render_to()
     let mut light_draws: Vec<(u32, f32, f32, Option<View>)> = Vec::new();
-    // particles: (ps_id, z, seq, view)
-    let mut particle_draws: Vec<(u32, i32, u32, Option<View>)> = Vec::new();
+    // particles: (ps_id, z, seq, view, bucket)
+    let mut particle_draws: Vec<(u32, i32, u32, Option<View>, usize)> = Vec::new();
     // The view (camera) applies to every draw command issued after set_view()
-    // and until reset_view(); each frame starts in screen space
+    // and until reset_view(); each frame (and each render_to switch) starts
+    // in screen space. set_view centers on the current destination's size.
     let mut current_view: Option<View> = None;
+    let mut view_size = (screen_w, screen_h);
 
     Python::attach(|py| {
         for (seq, cmd_obj) in commands.iter().enumerate() {
@@ -881,13 +954,14 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let b = tuple.get_item(3)?.extract::<u8>().unwrap_or(0);
                                 let a = tuple.get_item(4)?.extract::<u8>().unwrap_or(255);
 
-                                // sRGB input -> linear clear value (sRGB surface)
-                                clear_color = wgpu::Color {
+                                // sRGB input -> linear clear value (sRGB target);
+                                // applies to the current render_to destination
+                                buckets[bucket_idx].2 = Some(wgpu::Color {
                                     r: srgb8_to_linear(r) as f64,
                                     g: srgb8_to_linear(g) as f64,
                                     b: srgb8_to_linear(b) as f64,
                                     a: a as f64 / 255.0,
-                                };
+                                });
                             }
 
                             CMD_RECT_FILL => {
@@ -902,7 +976,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let a = tuple.get_item(8)?.extract::<u8>()? as f32 / 255.0;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
 
-                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id: white_pixel_sprite,
                                     x,
                                     y,
@@ -917,6 +991,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color_override: Some([r, g, b, a]),
                                     size_override: Some((w, h)),
                                     view: current_view,
+                                    blend: BLEND_ALPHA,
                                 }));
                             }
 
@@ -937,7 +1012,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 // The quad's own origin is its top-left corner:
                                 // place it so the rect stays centered after rotation
                                 let (sin, cos) = rot.sin_cos();
-                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id: white_pixel_sprite,
                                     x: cx - (w * cos - h * sin) / 2.0,
                                     y: cy - (w * sin + h * cos) / 2.0,
@@ -952,6 +1027,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color_override: Some([r, g, b, a]),
                                     size_override: Some((w, h)),
                                     view: current_view,
+                                    blend: BLEND_ALPHA,
                                 }));
                             }
 
@@ -976,7 +1052,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     // Center the quad on the line: offset by half
                                     // the width perpendicular to the direction
                                     let (sin, cos) = rot.sin_cos();
-                                    items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                    buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                         sprite_id: white_pixel_sprite,
                                         x: x1 + sin * width / 2.0,
                                         y: y1 - cos * width / 2.0,
@@ -991,6 +1067,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                         color_override: Some([r, g, b, a]),
                                         size_override: Some((len, width)),
                                         view: current_view,
+                                        blend: BLEND_ALPHA,
                                     }));
                                 }
                             }
@@ -1008,7 +1085,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
                                 // Circle texture is 1024x1024, scale to diameter
                                 let diameter = radius * 2.0;
-                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id: circle_sprite,
                                     x: cx,
                                     y: cy,
@@ -1023,6 +1100,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color_override: Some([r, g, b, a]),
                                     size_override: None,
                                     view: current_view,
+                                    blend: BLEND_ALPHA,
                                 }));
                             }
 
@@ -1033,7 +1111,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
                                 let z = tuple.get_item(4)?.extract::<i32>()?;
 
-                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id,
                                     x,
                                     y,
@@ -1048,12 +1126,13 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color_override: None,
                                     size_override: None,
                                     view: current_view,
+                                    blend: BLEND_ALPHA,
                                 }));
                             }
 
                             CMD_DRAW_EX => {
                                 // (CMD_DRAW_EX, sprite_id, x, y, rot, scale, alpha,
-                                //  flip_x, flip_y, z, scale_y)
+                                //  flip_x, flip_y, z, scale_y, blend)
                                 let sprite_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let x = tuple.get_item(2)?.extract::<f32>()?;
                                 let y = tuple.get_item(3)?.extract::<f32>()?;
@@ -1064,8 +1143,9 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let flip_y = tuple.get_item(8)?.extract::<bool>()?;
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
                                 let scale_y = tuple.get_item(10)?.extract::<f32>()?;
+                                let blend = tuple.get_item(11)?.extract::<u8>()?;
 
-                                items.push(DrawItem::Sprite(SpriteDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Sprite(SpriteDrawCommand {
                                     sprite_id,
                                     x,
                                     y,
@@ -1080,6 +1160,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                     color_override: None,
                                     size_override: None,
                                     view: current_view,
+                                    blend,
                                 }));
                             }
 
@@ -1096,7 +1177,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let z = tuple.get_item(9)?.extract::<i32>()?;
                                 let align = tuple.get_item(10)?.extract::<u8>()?;
 
-                                items.push(DrawItem::Text(TextDrawCommand {
+                                buckets[bucket_idx].1.push(DrawItem::Text(TextDrawCommand {
                                     font_id,
                                     text,
                                     x,
@@ -1124,7 +1205,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let ps_id = tuple.get_item(1)?.extract::<u32>()?;
                                 let z = tuple.get_item(2)?.extract::<i32>()?;
 
-                                particle_draws.push((ps_id, z, seq, current_view));
+                                particle_draws.push((ps_id, z, seq, current_view, bucket_idx));
                             }
 
                             CMD_SET_VIEW => {
@@ -1134,11 +1215,42 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                                 let y = tuple.get_item(2)?.extract::<f32>()?;
                                 let zoom = tuple.get_item(3)?.extract::<f32>()?;
                                 let rot = tuple.get_item(4)?.extract::<f32>()?;
-                                current_view = Some(make_view(x, y, zoom, rot, screen_w, screen_h));
+                                current_view =
+                                    Some(make_view(x, y, zoom, rot, view_size.0, view_size.1));
                             }
 
                             CMD_RESET_VIEW => {
                                 current_view = None;
+                            }
+
+                            CMD_RENDER_TO => {
+                                // (CMD_RENDER_TO, target_id) — 0 = back to the
+                                // screen. Every destination starts in its own
+                                // screen space, so the view resets.
+                                let target_id = tuple.get_item(1)?.extract::<u32>()?;
+                                current_view = None;
+                                if target_id == 0 {
+                                    bucket_idx = 0;
+                                    view_size = (screen_w, screen_h);
+                                } else {
+                                    let size = crate::engine::with_engine(|engine| {
+                                        engine.targets.get(target_id).map(|t| t.size)
+                                    })?
+                                    .ok_or_else(|| {
+                                        pyo3::exceptions::PyValueError::new_err(format!(
+                                            "Invalid render target ID: {}",
+                                            target_id
+                                        ))
+                                    })?;
+                                    view_size = (size.0 as f32, size.1 as f32);
+                                    bucket_idx = buckets
+                                        .iter()
+                                        .position(|b| b.0 == target_id)
+                                        .unwrap_or_else(|| {
+                                            buckets.push((target_id, Vec::new(), None));
+                                            buckets.len() - 1
+                                        });
+                                }
                             }
 
                             _ => {}
@@ -1191,14 +1303,17 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                     color_override: Some(color),
                     size_override: None,
                     view,
+                    blend: BLEND_ALPHA, // unused: lights have their own pipeline
                 });
             }
         }
 
         // Expand particle draws into sprite commands (all particles of a
-        // system share its z and seq; they stay in generation order)
-        for (ps_id, z, seq, view) in particle_draws {
+        // system share its z and seq; they stay in generation order) —
+        // appended to the bucket the particles_render() call was issued in
+        for (ps_id, z, seq, view, bucket) in particle_draws {
             if let Some(system) = engine.particle_systems.get(ps_id) {
+                let blend = system.config.blend;
                 if let Some(sprite_id) = system.config.sprite_id {
                     // Render as sprites (textured particles) with particle color
                     let base_size = engine
@@ -1207,7 +1322,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                         .map(|s| s.region.2 as f32)
                         .unwrap_or(32.0);
                     for draw_cmd in system.generate_draw_commands(base_size) {
-                        items.push(DrawItem::Sprite(SpriteDrawCommand {
+                        buckets[bucket].1.push(DrawItem::Sprite(SpriteDrawCommand {
                             sprite_id: draw_cmd.1,
                             x: draw_cmd.2,
                             y: draw_cmd.3,
@@ -1227,6 +1342,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             ]),
                             size_override: None,
                             view,
+                            blend,
                         }));
                     }
                 } else {
@@ -1238,7 +1354,7 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             vert_cmd.7 as f32 / 255.0,
                             vert_cmd.8 as f32 / 255.0,
                         ];
-                        items.push(DrawItem::Sprite(SpriteDrawCommand {
+                        buckets[bucket].1.push(DrawItem::Sprite(SpriteDrawCommand {
                             sprite_id: white_pixel_sprite,
                             x: vert_cmd.1,
                             y: vert_cmd.2,
@@ -1253,28 +1369,31 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
                             color_override: Some(color),
                             size_override: Some((vert_cmd.3, vert_cmd.4)),
                             view,
+                            blend,
                         }));
                     }
                 }
             }
         }
 
-        let items_count = items.len();
+        let items_count: usize = buckets.iter().map(|b| b.1.len()).sum();
 
         // Rasterize any missing glyphs BEFORE vertex generation: growing the
         // atlas changes its size and would invalidate UVs already computed
         // against the old size earlier in the same frame.
         if let (Some(device), Some(queue)) = (engine.device.as_ref(), engine.queue.as_ref()) {
-            for item in &items {
-                if let DrawItem::Text(cmd) = item {
-                    if let Some(font) = engine.fonts.get_mut(cmd.font_id) {
-                        font.ensure_glyphs(
-                            &cmd.text,
-                            device,
-                            queue,
-                            engine.sprite_texture_bind_group_layout.as_ref(),
-                            &mut engine.textures,
-                        );
+            for (_, items, _) in &buckets {
+                for item in items {
+                    if let DrawItem::Text(cmd) = item {
+                        if let Some(font) = engine.fonts.get_mut(cmd.font_id) {
+                            font.ensure_glyphs(
+                                &cmd.text,
+                                device,
+                                queue,
+                                engine.sprite_texture_bind_group_layout.as_ref(),
+                                &mut engine.textures,
+                            );
+                        }
                     }
                 }
             }
@@ -1369,79 +1488,102 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
         let t_sprite_start = Instant::now();
 
-        // ---- Geometry: scene items and light quads share one vertex buffer ----
+        // ---- Geometry: every bucket and the light quads share one vertex
+        // buffer; each bucket gets its own batch list (drawn in its own pass)
         let mut all_vertices: Vec<SpriteVertex> =
-            Vec::with_capacity((items.len() + light_cmds.len()) * 6);
-        let mut batches: Vec<(u32, u32, u32)> = Vec::new(); // (texture_id, start, count)
+            Vec::with_capacity((items_count + light_cmds.len()) * 6);
+        let mut bucket_batches: Vec<Vec<(u32, u32, u32, u8)>> = Vec::with_capacity(buckets.len());
 
-        // One unified sort: back-to-front by z, call order within a z.
-        // Batching works for consecutive items with the same texture.
-        items.sort_by_key(|item| item.order_key());
+        for (target_id, items, _) in &mut buckets {
+            // (texture_id, start, count, blend)
+            let mut batches: Vec<(u32, u32, u32, u8)> = Vec::new();
 
-        let mut current_texture_id: Option<u32> = None;
-        let mut batch_start = 0u32;
+            // A target's own texture cannot be sampled while being rendered to
+            let target_texture = if *target_id != 0 {
+                engine.targets.get(*target_id).map(|t| t.texture_id)
+            } else {
+                None
+            };
 
-        for item in &items {
-            match item {
-                DrawItem::Sprite(cmd) => {
-                    let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Invalid sprite ID: {}",
-                            cmd.sprite_id
-                        ))
-                    })?;
+            // One unified sort per destination: back-to-front by z, call order
+            // within a z. Batching works for consecutive items with the same
+            // texture and blend.
+            items.sort_by_key(|item| item.order_key());
 
-                    let texture_size = engine
-                        .textures
-                        .get(sprite.texture_id)
-                        .map(|t| t.size)
-                        .ok_or_else(|| {
+            let mut current_key: Option<(u32, u8)> = None;
+            let mut batch_start = all_vertices.len() as u32;
+
+            for item in items.iter() {
+                match item {
+                    DrawItem::Sprite(cmd) => {
+                        let sprite = engine.sprites.get(cmd.sprite_id).ok_or_else(|| {
                             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "Invalid texture ID: {}",
-                                sprite.texture_id
+                                "Invalid sprite ID: {}",
+                                cmd.sprite_id
                             ))
                         })?;
 
-                    switch_batch(
-                        &mut batches,
-                        &mut current_texture_id,
-                        &mut batch_start,
-                        all_vertices.len() as u32,
-                        sprite.texture_id,
-                    );
+                        if Some(sprite.texture_id) == target_texture {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "Cannot draw a render target into itself",
+                            ));
+                        }
 
-                    let verts = generate_sprite_vertices(sprite, texture_size, cmd);
-                    all_vertices.extend_from_slice(&verts);
-                }
-                DrawItem::Text(cmd) => {
-                    let font = match engine.fonts.get(cmd.font_id) {
-                        Some(f) => f,
-                        None => continue,
-                    };
-                    let atlas_size = match engine.textures.get(font.atlas_texture_id) {
-                        Some(t) => t.size,
-                        None => continue,
-                    };
+                        let texture_size = engine
+                            .textures
+                            .get(sprite.texture_id)
+                            .map(|t| t.size)
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                    "Invalid texture ID: {}",
+                                    sprite.texture_id
+                                ))
+                            })?;
 
-                    switch_batch(
-                        &mut batches,
-                        &mut current_texture_id,
-                        &mut batch_start,
-                        all_vertices.len() as u32,
-                        font.atlas_texture_id,
-                    );
+                        switch_batch(
+                            &mut batches,
+                            &mut current_key,
+                            &mut batch_start,
+                            all_vertices.len() as u32,
+                            sprite.texture_id,
+                            cmd.blend,
+                        );
 
-                    generate_text_vertices(font, atlas_size, cmd, &mut all_vertices);
+                        let verts = generate_sprite_vertices(sprite, texture_size, cmd);
+                        all_vertices.extend_from_slice(&verts);
+                    }
+                    DrawItem::Text(cmd) => {
+                        let font = match engine.fonts.get(cmd.font_id) {
+                            Some(f) => f,
+                            None => continue,
+                        };
+                        let atlas_size = match engine.textures.get(font.atlas_texture_id) {
+                            Some(t) => t.size,
+                            None => continue,
+                        };
+
+                        switch_batch(
+                            &mut batches,
+                            &mut current_key,
+                            &mut batch_start,
+                            all_vertices.len() as u32,
+                            font.atlas_texture_id,
+                            BLEND_ALPHA,
+                        );
+
+                        generate_text_vertices(font, atlas_size, cmd, &mut all_vertices);
+                    }
                 }
             }
-        }
 
-        // Save the last batch
-        if let Some(tex_id) = current_texture_id {
-            let count = all_vertices.len() as u32 - batch_start;
-            if count > 0 {
-                batches.push((tex_id, batch_start, count));
+            // Save the last batch of this bucket
+            if let Some((tex_id, blend)) = current_key {
+                let count = all_vertices.len() as u32 - batch_start;
+                if count > 0 {
+                    batches.push((tex_id, batch_start, count, blend));
+                }
             }
+            bucket_batches.push(batches);
         }
 
         // Light quads go after the scene vertices; they all use the soft
@@ -1553,6 +1695,63 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             None
         };
 
+        // ---- Target passes: each render_to() bucket into its texture ----
+        // They run before the screen pass, so a target drawn this frame can
+        // be used on screen in the same frame
+        for (i, (target_id, _, clear)) in buckets.iter().enumerate() {
+            if *target_id == 0 {
+                continue;
+            }
+            let target = engine.targets.get(*target_id).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid render target ID: {}",
+                    target_id
+                ))
+            })?;
+            let target_view = &engine
+                .textures
+                .get(target.texture_id)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Render target texture missing")
+                })?
+                .view;
+
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Target Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        // targets default to transparent, unlike the screen
+                        load: wgpu::LoadOp::Clear(clear.unwrap_or(wgpu::Color::TRANSPARENT)),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            if !bucket_batches[i].is_empty() {
+                let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
+                })?;
+                let sprite_pipeline_add = engine.sprite_pipeline_add.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
+                })?;
+                draw_sprite_batches(
+                    &mut pass,
+                    &bucket_batches[i],
+                    sprite_pipeline,
+                    sprite_pipeline_add,
+                    &target.projection_bind_group,
+                    engine.sprite_vertex_buffer.as_ref().unwrap(),
+                    &engine.textures,
+                )?;
+            }
+        }
+
         // ---- Pass 1: lights -> lightmap (cleared to the ambient color) ----
         if lighting_active {
             let lightmap_view = engine.lightmap_view.as_ref().ok_or_else(|| {
@@ -1607,6 +1806,12 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
 
         // ---- Pass 2: scene -> surface ----
         {
+            let clear_color = buckets[0].2.unwrap_or(wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            });
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1624,33 +1829,23 @@ pub fn render_batch(commands: Vec<Py<PyAny>>) -> PyResult<()> {
             });
 
             if let (false, Some(projection_bind_group)) =
-                (batches.is_empty(), projection_bind_group.as_ref())
+                (bucket_batches[0].is_empty(), projection_bind_group.as_ref())
             {
                 let sprite_pipeline = engine.sprite_pipeline.as_ref().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
                 })?;
-                let vertex_buffer = engine.sprite_vertex_buffer.as_ref().unwrap();
-
-                render_pass.set_pipeline(sprite_pipeline);
-                render_pass.set_bind_group(0, projection_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-
-                for &(texture_id, start, count) in &batches {
-                    // Use the texture's cached bind group
-                    let bind_group = engine
-                        .textures
-                        .get(texture_id)
-                        .and_then(|t| t.bind_group.as_ref())
-                        .ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "Invalid texture ID: {}",
-                                texture_id
-                            ))
-                        })?;
-
-                    render_pass.set_bind_group(1, bind_group, &[]);
-                    render_pass.draw(start..start + count, 0..1);
-                }
+                let sprite_pipeline_add = engine.sprite_pipeline_add.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Sprite pipeline not initialized")
+                })?;
+                draw_sprite_batches(
+                    &mut render_pass,
+                    &bucket_batches[0],
+                    sprite_pipeline,
+                    sprite_pipeline_add,
+                    projection_bind_group,
+                    engine.sprite_vertex_buffer.as_ref().unwrap(),
+                    &engine.textures,
+                )?;
             }
         }
 
@@ -1779,6 +1974,7 @@ mod tests {
             color_override: None,
             size_override: None,
             view: None,
+            blend: BLEND_ALPHA,
         }
     }
 
@@ -1821,6 +2017,21 @@ mod tests {
         assert_eq!(keys, vec![(0, 1), (0, 3), (0, 4), (1, 0), (2, 2)]);
         // The z=2 sprite must come after the z=1 text
         assert!(matches!(items.last().unwrap(), DrawItem::Sprite(_)));
+    }
+
+    #[test]
+    fn batches_split_on_blend_change() {
+        let mut batches = Vec::new();
+        let mut key = None;
+        let mut start = 0u32;
+        switch_batch(&mut batches, &mut key, &mut start, 0, 1, BLEND_ALPHA);
+        // same texture, new blend -> the alpha batch is closed
+        switch_batch(&mut batches, &mut key, &mut start, 6, 1, BLEND_ADD);
+        // same (texture, blend) -> no split
+        switch_batch(&mut batches, &mut key, &mut start, 12, 1, BLEND_ADD);
+        assert_eq!(batches, vec![(1, 0, 6, BLEND_ALPHA)]);
+        assert_eq!(key, Some((1, BLEND_ADD)));
+        assert_eq!(start, 6);
     }
 
     #[test]

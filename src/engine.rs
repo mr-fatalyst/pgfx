@@ -59,6 +59,7 @@ pub struct Engine {
 
     // Sprite rendering pipeline (used for everything - sprites, primitives, text)
     pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) sprite_pipeline_add: Option<wgpu::RenderPipeline>,
     pub(crate) sprite_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub(crate) sprite_texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub(crate) sprite_projection_buffer: Option<wgpu::Buffer>,
@@ -83,6 +84,7 @@ pub struct Engine {
     pub(crate) fonts: crate::resources::ResourcePool<crate::text::Font>,
     pub(crate) particle_systems: crate::resources::ResourcePool<crate::particles::ParticleSystem>,
     pub(crate) lights: crate::resources::ResourcePool<crate::lighting::Light>,
+    pub(crate) targets: crate::resources::ResourcePool<crate::texture::RenderTarget>,
 
     // Cached primitive textures (circle, circle_soft, square)
     pub(crate) primitive_textures:
@@ -123,6 +125,7 @@ impl Engine {
             queue: None,
             surface_config: None,
             sprite_pipeline: None,
+            sprite_pipeline_add: None,
             sprite_bind_group_layout: None,
             sprite_texture_bind_group_layout: None,
             sprite_projection_buffer: None,
@@ -141,6 +144,7 @@ impl Engine {
             fonts: crate::resources::ResourcePool::new(),
             particle_systems: crate::resources::ResourcePool::new(),
             lights: crate::resources::ResourcePool::new(),
+            targets: crate::resources::ResourcePool::new(),
             primitive_textures: HashMap::new(),
             lighting: crate::lighting::LightingState::new(),
             input: crate::input::InputState::new(),
@@ -373,6 +377,7 @@ impl ApplicationHandler for AppHandler {
                     // Create sprite pipeline (used for everything)
                     let (
                         sprite_pipeline,
+                        sprite_pipeline_add,
                         sprite_bind_group_layout,
                         sprite_texture_bind_group_layout,
                         sprite_projection_buffer,
@@ -411,6 +416,7 @@ impl ApplicationHandler for AppHandler {
 
                         engine.set_gpu(instance, surface, device, queue, surface_config);
                         engine.sprite_pipeline = Some(sprite_pipeline);
+                        engine.sprite_pipeline_add = Some(sprite_pipeline_add);
                         engine.sprite_bind_group_layout = Some(sprite_bind_group_layout);
                         engine.sprite_texture_bind_group_layout =
                             Some(sprite_texture_bind_group_layout);

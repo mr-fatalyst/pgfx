@@ -161,6 +161,155 @@ pub(crate) fn create_texture_from_rgba(
     }
 }
 
+pub type TargetId = u32;
+
+/// Offscreen render target: draw into it via render_to(), then use it as a
+/// sprite. Fixed size, so its projection uniform is baked at creation.
+pub struct RenderTarget {
+    pub texture_id: TextureId,
+    pub sprite_id: crate::sprite::SpriteId,
+    pub size: (u32, u32),
+    pub projection_bind_group: wgpu::BindGroup,
+}
+
+#[pyfunction]
+pub fn target_create(width: u32, height: u32) -> PyResult<TargetId> {
+    if width == 0 || height == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Render target size must be greater than 0",
+        ));
+    }
+    with_engine(|engine| {
+        let device = engine
+            .device
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
+        let queue = engine
+            .queue
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
+        // Match the surface format so the existing sprite pipelines can
+        // render into the target as-is
+        let format = engine
+            .surface_config
+            .as_ref()
+            .map(|c| c.format)
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("GPU not initialized"))?;
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Render Target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let bind_group = engine.sprite_texture_bind_group_layout.as_ref().map(|l| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Render Target Bind Group"),
+                layout: l,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            })
+        });
+
+        // Per-target projection uniform: the shared projection buffer belongs
+        // to the screen pass and is rewritten every frame
+        let projection = crate::renderer::create_projection_matrix(width as f32, height as f32);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Render Target Projection"),
+            size: std::mem::size_of::<glam::Mat4>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(projection.as_ref()));
+        let layout = engine.sprite_bind_group_layout.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Sprite bind group layout not initialized")
+        })?;
+        // The bind group keeps the buffer alive
+        let projection_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Render Target Projection Bind Group"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        let texture_id = engine.textures.insert(Texture {
+            texture,
+            view,
+            sampler,
+            size: (width, height),
+            bind_group,
+        });
+        let sprite_id = engine
+            .sprites
+            .insert(crate::sprite::Sprite::new(texture_id, (0, 0, width, height)));
+
+        Ok(engine.targets.insert(RenderTarget {
+            texture_id,
+            sprite_id,
+            size: (width, height),
+            projection_bind_group,
+        }))
+    })?
+}
+
+#[pyfunction]
+pub fn target_free(target: TargetId) -> PyResult<()> {
+    with_engine(|engine| {
+        let t = engine.targets.remove(target).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid render target ID: {}", target))
+        })?;
+        engine.sprites.remove(t.sprite_id);
+        engine.textures.remove(t.texture_id);
+        Ok(())
+    })?
+}
+
+#[pyfunction]
+pub fn target_sprite(target: TargetId) -> PyResult<crate::sprite::SpriteId> {
+    with_engine(|engine| {
+        engine.targets.get(target).map(|t| t.sprite_id).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid render target ID: {}", target))
+        })
+    })?
+}
+
+#[pyfunction]
+pub fn target_size(target: TargetId) -> PyResult<(u32, u32)> {
+    with_engine(|engine| {
+        engine.targets.get(target).map(|t| t.size).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid render target ID: {}", target))
+        })
+    })?
+}
+
 #[pyfunction]
 pub fn texture_load(path: &str) -> PyResult<TextureId> {
     with_engine(|engine| {

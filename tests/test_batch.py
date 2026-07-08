@@ -29,18 +29,31 @@ def test_draw_with_z(clean_commands):
 
 def test_draw_ex_defaults(clean_commands):
     pgfx.draw_ex(7, 1.0, 2.0)
-    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 1, 1, False, False, 0, 1)]
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 1, 1, False, False, 0, 1, 0)]
 
 
 def test_draw_ex_full(clean_commands):
     pgfx.draw_ex(7, 1.0, 2.0, rot=0.5, scale=2, alpha=0.8, flip_x=True, flip_y=True, z=3)
-    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0.5, 2, 0.8, True, True, 3, 2)]
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0.5, 2, 0.8, True, True, 3, 2, 0)]
 
 
 def test_draw_ex_scale_y(clean_commands):
     # scale_y defaults to scale; an explicit value overrides only the height
     pgfx.draw_ex(7, 1.0, 2.0, scale=2, scale_y=0.5)
-    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 2, 1, False, False, 0, 0.5)]
+    assert commands() == [(_batch.CMD_DRAW_EX, 7, 1.0, 2.0, 0, 2, 1, False, False, 0, 0.5, 0)]
+
+
+def test_draw_ex_blend(clean_commands):
+    pgfx.draw_ex(7, 1.0, 2.0, blend="add")
+    assert commands()[0][-1] == 1
+
+
+def test_draw_ex_rejects_unknown_blend(clean_commands):
+    import pytest
+
+    with pytest.raises(ValueError, match="blend"):
+        pgfx.draw_ex(7, 1.0, 2.0, blend="multiply")
+    assert commands() == []
 
 
 def test_rect_fill_ex(clean_commands):
@@ -126,3 +139,9 @@ def test_set_view_rejects_non_positive_zoom(clean_commands):
 def test_reset_view(clean_commands):
     pgfx.reset_view()
     assert commands() == [(_batch.CMD_RESET_VIEW,)]
+
+
+def test_render_to(clean_commands):
+    pgfx.render_to(5)
+    pgfx.render_to(None)  # back to the screen
+    assert commands() == [(_batch.CMD_RENDER_TO, 5), (_batch.CMD_RENDER_TO, 0)]

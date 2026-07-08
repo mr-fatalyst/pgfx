@@ -11,6 +11,7 @@ from pgfx._batch import (
     particles_render,
     rect_fill,
     rect_fill_ex,
+    render_to,
     reset_view,
     set_view,
     text,
@@ -78,6 +79,11 @@ from pgfx._native import (
     sprite_set_color,
     sprite_set_origin,
     sprite_sheet,
+    # Render targets
+    target_create,
+    target_free,
+    target_size,
+    target_sprite,
     text_size,
     texture_free,
     # Texture

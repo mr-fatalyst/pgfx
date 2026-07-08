@@ -35,6 +35,10 @@ ENGINE_FUNCTIONS = [
     (pgfx.font_load, ("nonexistent.ttf", 16)),
     (pgfx.font_free, (1,)),
     (pgfx.text_size, (1, "x")),
+    (pgfx.target_create, (64, 64)),
+    (pgfx.target_free, (1,)),
+    (pgfx.target_sprite, (1,)),
+    (pgfx.target_size, (1,)),
     (pgfx.sprite_rect, (1, 0.0, 0.0)),
     (pgfx.collide_sprites, (1, 0.0, 0.0, 2, 0.0, 0.0)),
     (pgfx.point_in_sprite, (0.0, 0.0, 1, 0.0, 0.0)),
@@ -71,6 +75,12 @@ def test_run_raises_before_init():
 def test_particles_create_rejects_unknown_primitive():
     with pytest.raises(ValueError, match="Unknown primitive"):
         pgfx.particles_create(primitive="bogus")
+
+
+def test_particles_create_rejects_unknown_blend():
+    # config parsing happens before the engine check, so no init() needed
+    with pytest.raises(ValueError, match="Unknown blend mode"):
+        pgfx.particles_create(blend="screen")
 
 
 def test_sprite_sheet_rejects_zero_dimensions():
