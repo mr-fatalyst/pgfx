@@ -33,8 +33,8 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/mr-fatalyst/pgfx"
 
-[project.optional-dependencies]
-dev = ["pytest", "ruff", "pre-commit"]
+[dependency-groups]
+dev = ["maturin>=1.10", "pytest", "ruff", "pre-commit"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
